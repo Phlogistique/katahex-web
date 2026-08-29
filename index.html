@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KataHex net in the browser</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 1rem; max-width: 42rem; }
+  button, select { font: inherit; padding: .4rem .8rem; }
+  pre { background: #f4f4f4; padding: .6rem; overflow-x: auto; white-space: pre-wrap; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; } pre { background: #1e1e1e; }
+  }
+</style>
+<h1>KataHex net in the browser</h1>
+<p>Loads <code>hex27x3.bin.gz</code> (97 MB) and times forward passes.</p>
+<p>
+  <label>backend <select id="backend"><option>webgpu</option><option>wasm</option><option>cpu</option></select></label>
+  <label>board <select id="size"><option>11</option><option>13</option><option>19</option></select></label>
+  <button id="go">Run</button>
+</p>
+<pre id="log"></pre>
+<script type="module" src="/src/bench.ts"></script>
