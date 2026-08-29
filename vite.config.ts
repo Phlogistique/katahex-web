@@ -7,6 +7,7 @@ const headers = {
 };
 
 export default defineConfig({
+  build: { rollupOptions: { input: ['index.html', 'micro.html'] } },
   preview: { headers },
   server: {
     host: true,

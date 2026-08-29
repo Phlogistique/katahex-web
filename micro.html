@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebGPU matmul ceiling</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 1rem; max-width: 42rem; }
+  button { font: inherit; padding: .4rem .8rem; }
+  pre { background: #f4f4f4; padding: .6rem; white-space: pre-wrap; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; } pre { background: #1e1e1e; }
+  }
+</style>
+<h1>WebGPU matmul ceiling</h1>
+<p>A hand-written tiled matrix multiply, to find what this GPU reaches from a
+browser before any inference runtime is involved.</p>
+<p><button id="go">Run</button></p>
+<pre id="log"></pre>
+<script type="module" src="/src/microbench.ts"></script>

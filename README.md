@@ -54,6 +54,46 @@ is where most of it has arrived, which is 16 search threads.
 13x13 on the same fp16 graph: 10.3 / 17.1 / 24.6 / 31.0 / 34.3 / 35.8 / 36.2
 evaluations a second over the same batch sizes.
 
+## Where the remaining gap is
+
+Not in the web platform. `micro.html` runs a tiled matrix multiply written by
+hand in WGSL, which is what a convolution becomes:
+
+| shape                            | fp32 | fp16 |
+| -------------------------------- | ---- | ---- |
+| 2048 square                      | 473  | 698  |
+| one trunk conv, batch 64         | 460  | 678  |
+
+GFLOP/s, and the skinny convolution shape costs nothing against the square one.
+
+The net needs 6.33 GFLOP per evaluation, 90% of it in the 62 3x3 convolutions of
+the trunk. At 52 evaluations a second onnxruntime is getting 329 GFLOP/s out of
+this GPU, less than half of what the hand-written kernel above reaches on the
+same shape in the same browser. Feed the net through a kernel that good and it
+would run at about 110 evaluations a second, next to native's 128.
+
+So the gap is onnxruntime's convolution, not WebGPU. Two things it lacks:
+
+- **Winograd.** KataGo's OpenCL backend transforms every 3x3 convolution to
+  F(4x4, 3x3), which issues 36 multiplies where the direct form issues 144, so
+  it does about a third of the arithmetic over the whole net. onnxruntime's
+  WebGPU backend has no Winograd path at all -- convolution goes through
+  `conv2d_mm.cc`, an implicit GEMM.
+- **Tuning.** KataGo ships a tuner and keeps the result per GPU;
+  `~/.katago/opencltuning/` holds the workgroup and tile sizes it picked for this
+  Iris Xe, and the fp16 storage and compute flags it turned on. onnxruntime ships
+  one set of generic shaders.
+
+Native's 811 GFLOP/s of nominal work is therefore only about 266 GFLOP/s issued.
+It wins by doing less arithmetic rather than by driving the GPU harder: the
+browser already issues more FLOP/s than native does.
+
+Two things ruled out along the way. Unfused elementwise work is not the problem:
+replacing all 118 mish activations with the identity, which drops 354 dispatches
+of the 828, changes the time by under 1%. And the platform exposes what a good
+kernel would want, `shader-f16` and `subgroups` both, with fp16 worth 1.5x on
+this GPU in the hand-written kernel and 1.7x in onnxruntime.
+
 ## What it has to beat
 
 Native OpenCL on this laptop's Iris Xe does 37.5 visits/s at 4 search threads, 83
@@ -64,6 +104,9 @@ row at batch 1, 7.8 ms at batch 60.
 That is also why the batch sweep in the net benchmark matters. If WebGPU shows
 the same curve, the port needs wasm pthreads, and so needs the page to be
 cross-origin isolated for `SharedArrayBuffer`.
+
+`micro.html`, alongside the net benchmark, is the WGSL matmul. It checks itself
+against all-ones inputs before timing.
 
 ## Engine
 
