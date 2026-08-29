@@ -134,6 +134,49 @@ Caveats:
   third of the winograd arithmetic is padding. F(2x2, 3x3) or rectangular
   tiles would fit it better.
 
+## The hand-written backend
+
+`src/webgpuModel.ts` runs the whole net on raw WebGPU: activations as
+[positions, channels] matrices, 1x1 convolutions and dense layers as one
+matmul each, 3x3 convolutions through the Winograd pipeline above, and small
+kernels for batchnorm+mish, residual adds, and KataGo's global pooling. The
+forward pass for a batch size compiles once into a flat list of dispatches
+with every shape baked into its shader.
+
+Evaluations per second on 11x11 fp16, hand-written against onnxruntime in the
+same sitting:
+
+| batch | hand-written | onnxruntime |
+| ----- | ------------ | ----------- |
+| 1     | 25.8         | 11.0        |
+| 2     | 45.4         | 21.3        |
+| 4     | 72.2         | 32.3        |
+| 8     | 82.8         | 41.7        |
+| 16    | 106.1        | 49.0        |
+| 32    | 120.0        | 51.4        |
+| 64    | 109.0        | 53.0        |
+
+2.1-2.4x at every batch size, and the top of the curve sits next to native
+OpenCL's 128 visits/s. A single evaluation takes 39 ms where onnxruntime and
+native OpenCL both take about 90, which shortens the latency-bound early
+search. fp32 reaches 68 evaluations a second, still 2.2x onnxruntime's fp32;
+13x13 fp16 about 60, where the 4x4 Winograd tiles fit the board worst.
+
+Correctness is checked on every load against the TensorFlow.js implementation
+of the same net, two codepaths sharing only the weight file: fp32 agrees to
+1e-4 on the policy logits. fp16 sits at 0.05 mean / 0.6 max on logits reaching
+17, and that error is the fp16 storage of the trunk activations themselves,
+not the arithmetic: computing the Winograd transforms in f32 cut it by 3x
+(their coefficients reach 8, which fp16 amplifies), but accumulating the
+matmul in f32 and keeping the Winograd product matrix in f32 each moved it by
+less than the run-to-run chaos, so neither is kept. Native KataGo's fp16 mode
+quantizes the same tensors the same way.
+
+One WGSL lesson: a `var` declared inside a loop is supposed to be
+re-initialized on every iteration, but this Intel/Mesa driver does not, which
+turned a per-tile accumulator into a prefix sum and the whole net into NaN.
+Zero explicitly.
+
 ## What it has to beat
 
 Native OpenCL on this laptop's Iris Xe does 37.5 visits/s at 4 search threads, 83

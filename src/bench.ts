@@ -9,6 +9,7 @@ import '@tensorflow/tfjs-backend-wasm';
 import * as ort from 'onnxruntime-web/webgpu';
 import { parseKataGoModelV8 } from '../vendor/loadModelV8';
 import { KataGoModelV8Tf } from '../vendor/modelV8';
+import { KataGoWebGpuModel } from './webgpuModel';
 
 const logEl = document.getElementById('log')!;
 const log = (s: string) => {
@@ -64,6 +65,71 @@ async function makeTfRunner(backend: string, size: number): Promise<Runner> {
   };
 }
 
+/**
+ * The hand-written WebGPU backend. Before timing, checks one random position
+ * against the TensorFlow.js implementation of the same net on the CPU: two
+ * independent codepaths from the same weights.
+ */
+async function makeHandRunner(size: number, half: boolean): Promise<Runner> {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) throw new Error('no WebGPU adapter');
+  if (half && !adapter.features.has('shader-f16')) throw new Error('no shader-f16');
+  const device = await adapter.requestDevice({ requiredFeatures: half ? ['shader-f16'] : [] });
+  device.addEventListener('uncapturederror',
+    (e) => log(`GPU ERROR: ${(e as GPUUncapturedErrorEvent).error.message}`));
+
+  const bytes = await fetchModel('/hex27x3.bin.gz');
+  const parsed = parseKataGoModelV8(bytes);
+  const t0 = performance.now();
+  const model = new KataGoWebGpuModel(device, parsed, size, half);
+  log(`hand webgpu ${half ? 'fp16' : 'fp32'} weights ready in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+
+  const hw = size * size;
+  // Deterministic pseudo-random position, so error numbers compare across runs.
+  let seed = 12345;
+  const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x80000000;
+  const spatial = new Float32Array(hw * NUM_SPATIAL_FEATURES);
+  for (let i = 0; i < spatial.length; i++) {
+    spatial[i] = i % NUM_SPATIAL_FEATURES === 0 ? 1 : (rand() < 0.2 ? 1 : 0);
+  }
+  const global = new Float32Array(NUM_GLOBAL_FEATURES);
+  const got = await model.evaluate(spatial, global, 1);
+
+  await tf.setBackend('cpu');
+  const ref = tf.tidy(() => {
+    const m = new KataGoModelV8Tf(parsed);
+    const out = m.forwardPolicyValue(
+      tf.tensor4d(spatial, [1, size, size, NUM_SPATIAL_FEATURES]),
+      tf.tensor2d(global, [1, NUM_GLOBAL_FEATURES]));
+    return {
+      policy: out.policy.dataSync() as Float32Array,
+      policyPass: out.policyPass.dataSync() as Float32Array,
+      value: out.value.dataSync() as Float32Array,
+    };
+  });
+  let maxPolicyErr = 0, maxLogit = 0, sumErr = 0;
+  for (let i = 0; i < hw; i++) {
+    const err = Math.abs(got.policy[0][i] - ref.policy[i]);
+    maxPolicyErr = Math.max(maxPolicyErr, err);
+    sumErr += err;
+    maxLogit = Math.max(maxLogit, Math.abs(ref.policy[i]));
+  }
+  const valueErr = Math.max(...[0, 1, 2].map((i) => Math.abs(got.value[0][i] - ref.value[i])));
+  log(`check vs tensorflow.js cpu: policy logit err ${maxPolicyErr.toFixed(4)} max, ` +
+      `${(sumErr / hw).toFixed(4)} mean (logits reach ${maxLogit.toFixed(1)}), pass err ` +
+      `${Math.abs(got.policyPass[0] - ref.policyPass[0]).toFixed(4)}, value err ${valueErr.toFixed(4)}`);
+
+  return {
+    async evaluate(batchSize) {
+      const out = await model.evaluate(
+        new Float32Array(batchSize * hw * NUM_SPATIAL_FEATURES),
+        new Float32Array(batchSize * NUM_GLOBAL_FEATURES), batchSize);
+      return out.policy[0][0];
+    },
+    dispose: () => { model.dispose(); device.destroy(); },
+  };
+}
+
 async function makeOrtRunner(provider: 'webgpu' | 'wasm', size: number, half: boolean): Promise<Runner> {
   // onnxruntime loads its own wasm at runtime. Serve those files as plain static
   // assets: vite's dev server rewrites the dynamic import of the .mjs and hands
@@ -104,9 +170,11 @@ async function run() {
       log(`webgpu adapter, shader-f16: ${adapter.features?.has?.('shader-f16')}`);
     }
 
-    runner = runtime.startsWith('onnx')
-      ? await makeOrtRunner(runtime.includes('wasm') ? 'wasm' : 'webgpu', size, runtime.includes('fp16'))
-      : await makeTfRunner(runtime.includes('wasm') ? 'wasm' : 'webgpu', size);
+    runner = runtime.startsWith('hand')
+      ? await makeHandRunner(size, runtime.includes('fp16'))
+      : runtime.startsWith('onnx')
+        ? await makeOrtRunner(runtime.includes('wasm') ? 'wasm' : 'webgpu', size, runtime.includes('fp16'))
+        : await makeTfRunner(runtime.includes('wasm') ? 'wasm' : 'webgpu', size);
 
     for (const batchSize of BATCHES) {
       const probe = await runner.evaluate(batchSize); // warm up: compiles every shader
