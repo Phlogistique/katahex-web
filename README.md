@@ -98,6 +98,42 @@ of the 828, changes the time by under 1%. And the platform exposes what a good
 kernel would want, `shader-f16` and `subgroups` both, with fp16 worth 1.5x on
 this GPU in the hand-written kernel and 1.7x in onnxruntime.
 
+## Winograd, measured
+
+`winograd.html` implements the trunk convolution as F(4x4, 3x3) in WGSL --
+input transform, batched matmul over the 36 tile positions, output transform,
+with KataGo's transform matrices and matmul layout -- and times it against the
+same convolution as one direct matmul in the same sitting. It first checks
+itself against a direct convolution on the CPU; fp32 agrees to 4e-5.
+
+Milliseconds per 192-channel trunk convolution, one run:
+
+| shape           | direct fp32 | winograd fp32 | direct fp16 | winograd fp16 |
+| --------------- | ----------- | ------------- | ----------- | ------------- |
+| 11x11, batch 16 | 3.1         | 1.6           | 2.1         | 1.4           |
+| 11x11, batch 64 | 11.7        | 6.1           | 8.3         | 5.2           |
+| 13x13, batch 64 | 18.3        | 14.3          | 11.9        | 10.1          |
+
+So on 11x11 winograd is 1.5x over the direct matmul in fp16 and 1.9x in fp32,
+about 990 effective GFLOP/s at fp16 batch 64 where onnxruntime's whole net gets
+329. If the trunk convolutions (90% of the net's arithmetic) ran at that rate
+and the rest stayed at onnxruntime's pace, an evaluation would cost about
+7.7 ms at batch 64: some 130 evaluations a second, next to native's 128. That
+is the case for writing the net's WebGPU backend by hand.
+
+Caveats:
+
+- Half the winograd time is the two transforms, not the matmul, so there is
+  room left; KataGo fuses batchnorm and activation into its transform kernels.
+- fp16 winograd is much less exact: max error 0.4 on outputs reaching 8, on
+  uniform random inputs, against 4e-5 for fp32. The transform coefficients
+  (4, 5, 8) stretch the values fp16 has to accumulate. Whether it matters is a
+  question for the whole net's policy outputs, measured the way the ONNX
+  section above measures quantization.
+- 13x13 gains much less: 4x4 output tiles cover a 13-wide board as 16, so a
+  third of the winograd arithmetic is padding. F(2x2, 3x3) or rectangular
+  tiles would fit it better.
+
 ## What it has to beat
 
 Native OpenCL on this laptop's Iris Xe does 37.5 visits/s at 4 search threads, 83

@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebGPU Winograd convolution</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 1rem; max-width: 42rem; }
+  button { font: inherit; padding: .4rem .8rem; }
+  pre { background: #f4f4f4; padding: .6rem; white-space: pre-wrap; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; } pre { background: #1e1e1e; }
+  }
+</style>
+<h1>WebGPU Winograd convolution</h1>
+<p>The trunk's 3x3 convolution as F(4x4, 3x3) -- transform, batched matmul,
+untransform -- against the same convolution as one direct matmul, both
+hand-written in WGSL. Checked against a direct convolution on the CPU before
+timing.</p>
+<p><button id="go">Run</button></p>
+<pre id="log"></pre>
+<script type="module" src="/src/winogradBench.ts"></script>
