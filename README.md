@@ -27,6 +27,26 @@ phone:
 
     adb reverse tcp:5173 tcp:5173
 
+## Measured, Chrome 11x11 on the Iris Xe laptop (TensorFlow.js WebGPU, fp32)
+
+| batch | ms/call | evals/s |     | 13x13   | evals/s |
+| ----- | ------- | ------- | --- | ------- | ------- |
+| 1     | 86.1    | 11.6    |     | batch 1 | 12.2    |
+| 2     | 116.0   | 17.2    |     | batch 2 | 15.1    |
+| 4     | 158.5   | 25.2    |     | batch 4 | 15.9    |
+| 8     | 305.8   | 26.2    |     | batch 8 | 19.5    |
+| 16    | 621.1   | 25.8    |     | batch 16| 17.5    |
+
+It flattens at batch 4. A single evaluation costs the same as it does natively
+(86 ms against 83), so what the browser gives up is the batching win, not raw
+throughput -- native keeps going down to 7.8 ms per row. Batching is still worth
+2.2x here, so the page does want threads, just not many: eight search threads put
+the batch at four, and nothing past that helps.
+
+TensorFlow.js does not use fp16 even where the adapter offers `shader-f16`, which
+native does use and which is a good part of the remaining gap. Worth trying ONNX
+Runtime Web before accepting these numbers as the ceiling.
+
 ## What it has to beat
 
 Native OpenCL on this laptop's Iris Xe does 37.5 visits/s at 4 search threads, 83

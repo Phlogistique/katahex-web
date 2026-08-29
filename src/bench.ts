@@ -17,21 +17,17 @@ async function fetchModel(url: string): Promise<Uint8Array> {
   const t0 = performance.now();
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`${resp.status} fetching ${url}`);
-  const stream = resp.body!.pipeThrough(new DecompressionStream('gzip'));
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  const reader = stream.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    total += value.length;
+  let bytes = new Uint8Array(await resp.arrayBuffer());
+
+  // A server that labels the file `Content-Encoding: gzip` -- vite's dev server
+  // does, for any .gz -- has the browser inflate it on the way in, and inflating
+  // it again fails. Go by what actually arrived.
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    bytes = new Uint8Array(await new Response(stream).arrayBuffer());
   }
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) { out.set(c, off); off += c.length; }
-  log(`downloaded + gunzipped ${(total / 1e6).toFixed(1)} MB in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
-  return out;
+  log(`model ready, ${(bytes.length / 1e6).toFixed(1)} MB in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+  return bytes;
 }
 
 async function run() {
