@@ -1,3 +1,5 @@
 node_modules/
 dist/
 public/hex27x3.bin.gz
+build/
+analysis_logs/

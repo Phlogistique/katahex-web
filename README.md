@@ -40,15 +40,40 @@ the benchmark decides whether the port needs wasm pthreads at all.
 ## Engine
 
 `scripts/build-engine.sh` cross-compiles the KataHex engine to WebAssembly. It
-needs a katahex checkout on the `wasm-build` branch, which carries two cmake
-fixes for targeting Emscripten.
+needs a katahex checkout on the `wasm-build` branch, which carries the cmake
+fixes for targeting Emscripten and the JS backend below. 1.6 MB of wasm.
 
-The result runs and answers analysis queries:
+`BACKEND=EIGEN` builds the engine with the net on the wasm CPU, which works and
+answers analysis queries at **1.2 visits/s** -- 2.7x under native Eigen, itself
+5x under the GPU. Useless as a product, but it establishes that the board, the
+input features and the search need no porting.
 
-    node ../build-wasm/katahex.js analysis -model ../hex27x3.bin.gz \
-      -config ../katahex/cpp/configs/analysis_example.cfg
+## Bridge
 
-1.6 MB of wasm, and **1.2 visits/s** on the laptop -- 2.7x under native Eigen,
-which is itself 5x under the GPU. That is the point of the exercise: the search,
-the board and the input features are all in place and correct, and the neural net
-now has to move off the wasm CPU and onto WebGPU.
+`BACKEND=JS`, the default, builds the engine against
+`katahex/cpp/neuralnet/jsbackend.cpp`, which evaluates nothing. It writes the net
+inputs into the shared wasm memory, wakes whoever is listening and blocks on one
+atomic word; `src/netRunner.ts` reads them, runs the net with TensorFlow.js,
+writes the outputs back and wakes the engine. The two files are halves of one
+protocol.
+
+`npm run test:engine` drives it under node with the TensorFlow.js CPU backend:
+
+    echo '{"id":"a","moves":[["B","f6"],["W","d4"]],"rules":"tromp-taylor",
+           "komi":0,"boardXSize":11,"boardYSize":11,"maxVisits":5,
+           "analyzeTurns":[2]}' | npm run test:engine
+
+Against the native Eigen engine on the same query with `nnRandomize=false`, the
+answers agree to within 1e-6: same principal variation, same move order, same
+visit distribution. Two independent implementations of the same net.
+
+Two things to know:
+
+- The board must fill the net's input tensor. The TensorFlow.js port does not
+  implement KataGo's mask and takes the board size from the tensor shape, so an
+  engine whose `nnXLen` exceeds the board would pool over the padding and quietly
+  return wrong numbers. Pass `maxBoardSizeForNNBuffer` equal to the board size.
+  `netRunner.ts` checks the mask channel on the first evaluation and throws.
+- `Atomics.waitAsync` does not keep node's event loop alive, so the net worker
+  needs a handle of its own or its wakeup promise never settles. Browsers have no
+  such notion.
