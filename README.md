@@ -29,7 +29,10 @@ phone:
 
 ## Measured, Chrome 11x11 on the Iris Xe laptop
 
-Evaluations per second on WebGPU, by batch size. Runs vary by about 10%.
+Evaluations per second on WebGPU, by batch size. Take these to one significant
+figure: this laptop is usually loaded, and repeating the fp16 batch 16 cell on
+one afternoon gave 45.9, 48.7 and 63.3. Compare runtimes within a sitting, not
+against the table.
 
 | batch | TensorFlow.js fp32 | onnxruntime fp32 | onnxruntime fp16 |
 | ----- | ------------------ | ---------------- | ---------------- |
@@ -77,8 +80,9 @@ So the gap is onnxruntime's convolution, not WebGPU. Two things it lacks:
 - **Winograd.** KataGo's OpenCL backend transforms every 3x3 convolution to
   F(4x4, 3x3), which issues 36 multiplies where the direct form issues 144, so
   it does about a third of the arithmetic over the whole net. onnxruntime's
-  WebGPU backend has no Winograd path at all -- convolution goes through
-  `conv2d_mm.cc`, an implicit GEMM.
+  WebGPU backend has no Winograd path at all: `strings` on its wasm finds
+  `conv2d_mm.cc`, an implicit GEMM, and no Winograd anywhere. Worth rechecking
+  on a later onnxruntime.
 - **Tuning.** KataGo ships a tuner and keeps the result per GPU;
   `~/.katago/opencltuning/` holds the workgroup and tile sizes it picked for this
   Iris Xe, and the fp16 storage and compute flags it turned on. onnxruntime ships
