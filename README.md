@@ -51,6 +51,9 @@ A single evaluation costs the same everywhere, including natively (around 90 ms
 against 83), so what the browser gives up is entirely the batching win. Batch 8
 is where most of it has arrived, which is 16 search threads.
 
+13x13 on the same fp16 graph: 10.3 / 17.1 / 24.6 / 31.0 / 34.3 / 35.8 / 36.2
+evaluations a second over the same batch sizes.
+
 ## What it has to beat
 
 Native OpenCL on this laptop's Iris Xe does 37.5 visits/s at 4 search threads, 83
