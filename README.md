@@ -27,15 +27,16 @@ phone:
 
     adb reverse tcp:5173 tcp:5173
 
-## Measured for comparison (11x11, native, Iris Xe laptop, 2026-08-29)
+## What it has to beat
 
-| build                   | 1 thread | 4 threads | 16 threads |
-| ----------------------- | -------- | --------- | ---------- |
-| Eigen CPU, AVX2         | 3.3 v/s  | 7.1 v/s   |            |
-| OpenCL, fp16            | 11.7 v/s | 18.0 v/s  | 30.3 v/s   |
+Native OpenCL on this laptop's Iris Xe does 37.5 visits/s at 4 search threads, 83
+at 16 and 105 at 32, on 11x11. Threads are the lever because KataGo's average
+batch comes out at half the thread count and the GPU is latency-bound: 83 ms per
+row at batch 1, 7.8 ms at batch 60.
 
-Threads buy throughput by growing the eval batch, which is why the batch sweep in
-the benchmark decides whether the port needs wasm pthreads at all.
+That is also why the batch sweep in the net benchmark matters. If WebGPU shows
+the same curve, the port needs wasm pthreads, and so needs the page to be
+cross-origin isolated for `SharedArrayBuffer`.
 
 ## Engine
 
@@ -43,10 +44,12 @@ the benchmark decides whether the port needs wasm pthreads at all.
 needs a katahex checkout on the `wasm-build` branch, which carries the cmake
 fixes for targeting Emscripten and the JS backend below. 1.6 MB of wasm.
 
-`BACKEND=EIGEN` builds the engine with the net on the wasm CPU, which works and
-answers analysis queries at **1.2 visits/s** -- 2.7x under native Eigen, itself
-5x under the GPU. Useless as a product, but it establishes that the board, the
-input features and the search need no porting.
+`BACKEND=EIGEN` builds the engine with the net on the wasm CPU. It works and
+answers analysis queries, at roughly a third of the speed of the same engine
+built natively -- itself an order of magnitude under the GPU. Useless as a
+product, but it establishes that the board, the input features and the search
+need no porting. (Both figures were measured on a loaded machine and are only
+good to a factor of two.)
 
 ## Bridge
 
