@@ -27,25 +27,29 @@ phone:
 
     adb reverse tcp:5173 tcp:5173
 
-## Measured, Chrome 11x11 on the Iris Xe laptop (TensorFlow.js WebGPU, fp32)
+## Measured, Chrome 11x11 on the Iris Xe laptop
 
-| batch | ms/call | evals/s |     | 13x13   | evals/s |
-| ----- | ------- | ------- | --- | ------- | ------- |
-| 1     | 86.1    | 11.6    |     | batch 1 | 12.2    |
-| 2     | 116.0   | 17.2    |     | batch 2 | 15.1    |
-| 4     | 158.5   | 25.2    |     | batch 4 | 15.9    |
-| 8     | 305.8   | 26.2    |     | batch 8 | 19.5    |
-| 16    | 621.1   | 25.8    |     | batch 16| 17.5    |
+Evaluations per second on WebGPU, by batch size. Runs vary by about 10%.
 
-It flattens at batch 4. A single evaluation costs the same as it does natively
-(86 ms against 83), so what the browser gives up is the batching win, not raw
-throughput -- native keeps going down to 7.8 ms per row. Batching is still worth
-2.2x here, so the page does want threads, just not many: eight search threads put
-the batch at four, and nothing past that helps.
+| batch | TensorFlow.js fp32 | onnxruntime fp32 | onnxruntime fp16 |
+| ----- | ------------------ | ---------------- | ---------------- |
+| 1     | 11.6               | 9.8              | 9.9              |
+| 2     | 17.2               | 18.4             | 20.3             |
+| 4     | 25.2               | 25.0             | 29.7             |
+| 8     | 26.2               | 29.4             | 40.2             |
+| 16    | 25.8               | 31.0             | 47.4             |
+| 32    |                    |                  | 50.1             |
+| 64    |                    |                  | 51.6             |
 
-TensorFlow.js does not use fp16 even where the adapter offers `shader-f16`, which
-native does use and which is a good part of the remaining gap. Worth trying ONNX
-Runtime Web before accepting these numbers as the ceiling.
+Half precision is what makes the difference, and it is what native uses too.
+TensorFlow.js computes in fp32 whatever the adapter offers and flattens at batch
+4; onnxruntime on a float16 graph keeps scaling to about 50 evaluations a second,
+roughly half of what native OpenCL does on this GPU, and the file is 53 MB rather
+than 105.
+
+A single evaluation costs the same everywhere, including natively (around 90 ms
+against 83), so what the browser gives up is entirely the batching win. Batch 8
+is where most of it has arrived, which is 16 search threads.
 
 ## What it has to beat
 
@@ -70,6 +74,26 @@ built natively -- itself an order of magnitude under the GPU. Useless as a
 product, but it establishes that the board, the input features and the search
 need no porting. (Both figures were measured on a loaded machine and are only
 good to a factor of two.)
+
+## ONNX
+
+`scripts/bin_to_onnx.py` converts the net to ONNX without going through PyTorch,
+which the existing converters need and which we have no checkpoint for. It reads
+KataGo's weight format directly and builds the graph to match
+`vendor/modelV8.ts`. `--fp16` computes in half precision, with float32 in and out
+so callers do not have to care.
+
+    uv run --with onnx --with numpy python scripts/bin_to_onnx.py \
+      ../hex27x3.bin.gz public/hex27x3-11-fp16.onnx --size 11 --fp16
+
+The board size is baked in, for the same reason the TensorFlow.js path needs it
+passed: KataGo's global pooling scales by the board size and the net carries no
+mask here.
+
+`scripts/check_onnx.py` then `scripts/check-onnx-tfjs.ts` check the result. The
+float32 graph agrees with the TensorFlow.js implementation to 3e-4, on policy
+logits that reach 55. Half precision costs more, 0.22 on those same logits, on a
+random input that pushes them further than a real position would.
 
 ## Bridge
 

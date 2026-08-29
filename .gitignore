@@ -3,3 +3,6 @@ dist/
 public/hex27x3.bin.gz
 build/
 analysis_logs/
+public/hex27x3-*.onnx
+public/ort/
+__pycache__/

@@ -11,10 +11,16 @@
   }
 </style>
 <h1>KataHex net in the browser</h1>
-<p>Loads <code>hex27x3.bin.gz</code> (97 MB) and times forward passes.</p>
+<p>Times forward passes of the hex27x3 net, about 100 MB whichever runtime loads it.</p>
 <p>
-  <label>backend <select id="backend"><option>webgpu</option><option>wasm</option><option>cpu</option></select></label>
-  <label>board <select id="size"><option>11</option><option>13</option><option>19</option></select></label>
+  <label>runtime <select id="runtime">
+    <option value="onnx-webgpu-fp16">onnxruntime webgpu fp16</option>
+    <option value="onnx-webgpu">onnxruntime webgpu</option>
+    <option value="tfjs-webgpu">tensorflow.js webgpu</option>
+    <option value="onnx-wasm">onnxruntime wasm</option>
+    <option value="tfjs-wasm">tensorflow.js wasm</option>
+  </select></label>
+  <label>board <select id="size"><option>11</option><option>13</option></select></label>
   <button id="go">Run</button>
 </p>
 <pre id="log"></pre>
