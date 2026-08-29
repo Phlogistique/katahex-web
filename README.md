@@ -36,3 +36,19 @@ phone:
 
 Threads buy throughput by growing the eval batch, which is why the batch sweep in
 the benchmark decides whether the port needs wasm pthreads at all.
+
+## Engine
+
+`scripts/build-engine.sh` cross-compiles the KataHex engine to WebAssembly. It
+needs a katahex checkout on the `wasm-build` branch, which carries two cmake
+fixes for targeting Emscripten.
+
+The result runs and answers analysis queries:
+
+    node ../build-wasm/katahex.js analysis -model ../hex27x3.bin.gz \
+      -config ../katahex/cpp/configs/analysis_example.cfg
+
+1.6 MB of wasm, and **1.2 visits/s** on the laptop -- 2.7x under native Eigen,
+which is itself 5x under the GPU. That is the point of the exercise: the search,
+the board and the input features are all in place and correct, and the neural net
+now has to move off the wasm CPU and onto WebGPU.
