@@ -191,6 +191,59 @@ cross-origin isolated for `SharedArrayBuffer`.
 `micro.html`, alongside the net benchmark, is the WGSL matmul. It checks itself
 against all-ones inputs before timing.
 
+## The page
+
+`katahex-android/ui` is the hexplorer, vendored from PlayHex for the Android app.
+It reaches its engine through a small bridge on `window` -- `Native.start(size)`,
+`Native.query(json)`, and the engine's two output streams back as
+`onEngineLine` and `onEngineLog` -- which the app implements in Java over a child
+process. `src/wasmEngine.ts` implements the same bridge with the engine compiled
+to WebAssembly, so the same ui becomes a page that needs no server:
+
+    cd ../katahex-android/ui
+    ln -s ../../../build-wasm-js-web/katahex.js public/katahex.js
+    ln -s ../../../build-wasm-js-web/katahex.wasm public/katahex.wasm
+    ln -s ../../../hex27x3.bin.gz public/hex27x3.bin.gz
+    npx vite --mode web        # then open /web.html
+
+`src/engineWorker.ts` is the whole page-side engine: one worker holding the wasm
+engine, the net on WebGPU, and `src/netRunner.ts` between them. It takes about ten
+seconds to start, nearly all of it the 97 MB net. `?fp32` runs the net in single
+precision.
+
+Two things had to change for a page, both because a browser's main thread is not
+optional:
+
+- **The engine's output is proxied to the thread that loaded the module**, so that
+  thread must stay free. `-sPROXY_TO_PTHREAD` puts `main()` on a thread of its
+  own, which is what lets it block.
+- **A page has no stdin.** Blocking on it deadlocks: the read is proxied to that
+  same thread. So the browser build takes its queries by a call instead --
+  `katahexPushQuery`, guarded by `KATAHEX_QUERY_QUEUE` in `analysis.cpp`, ten
+  lines of queue. The node build keeps reading stdin.
+
+Also worth knowing: the model download arrives *already inflated*, because servers
+set `Content-Encoding: gzip` on a `.gz`. Sniff the magic bytes rather than
+trusting the name.
+
+### Search speed, 11x11 on the Iris Xe laptop
+
+Full searches from five different openings, cache cleared before each, two
+analysis threads of eight search threads:
+
+| | visits/s |
+| --- | --- |
+| page, fp16 | 65 |
+| page, fp32 | 41 |
+| native OpenCL, same laptop | 105 |
+| native OpenCL, Pixel 7 | 64 |
+
+So the browser searches at about 60% of native on the same machine, with the board
+and the search themselves running in WebAssembly, and matches a phone running the
+whole thing natively. Half precision is worth 1.6x -- more than it is worth on any
+single batch size, because a search is a mixture of batch sizes and the small ones
+gain the most.
+
 ## Engine
 
 `scripts/build-engine.sh` cross-compiles the KataHex engine to WebAssembly. It
@@ -229,9 +282,10 @@ random input that pushes them further than a real position would.
 `BACKEND=JS`, the default, builds the engine against
 `katahex/cpp/neuralnet/jsbackend.cpp`, which evaluates nothing. It writes the net
 inputs into the shared wasm memory, wakes whoever is listening and blocks on one
-atomic word; `src/netRunner.ts` reads them, runs the net with TensorFlow.js,
-writes the outputs back and wakes the engine. The two files are halves of one
-protocol.
+atomic word; `src/netRunner.ts` reads them, evaluates the net, writes the outputs
+back and wakes the engine. The two files are halves of one protocol. What
+evaluates is a parameter: the hand-written WebGPU model in a page, TensorFlow.js
+on the CPU under node.
 
 `npm run test:engine` drives it under node with the TensorFlow.js CPU backend:
 

@@ -9,12 +9,13 @@ import { parentPort, workerData } from 'node:worker_threads';
 import * as tf from '@tensorflow/tfjs';
 import { parseKataGoModelV8 } from '../vendor/loadModelV8';
 import { KataGoModelV8Tf } from '../vendor/modelV8';
-import { serveEvals } from './netRunner';
+import { serveEvals, type NetEvaluator } from './netRunner';
 
 type WorkerData = {
   memory: WebAssembly.Memory;
   controlAddress: number;
   modelPath: string;
+  boardSize: number;
 };
 
 // The engine holds node's event loop while it searches, so console output from
@@ -30,7 +31,7 @@ async function main() {
   // without a handle the worker goes idle and the promise never settles. A
   // browser has no such notion and needs nothing.
   setInterval(() => {}, 1 << 30);
-  const { memory, controlAddress, modelPath } = workerData as WorkerData;
+  const { memory, controlAddress, modelPath, boardSize } = workerData as WorkerData;
 
   await tf.setBackend('cpu');
   await tf.ready();
@@ -40,7 +41,34 @@ async function main() {
   log(`model ready on ${tf.getBackend()}`);
   parentPort!.postMessage({ kind: 'ready', backend: tf.getBackend() });
 
-  await serveEvals(memory, controlAddress, model, {
+  // TensorFlow.js hands back one flat array per head, where the runner wants a
+  // row per position in the batch.
+  const rows = (flat: Float32Array, stride: number, batch: number): Float32Array[] =>
+    Array.from({ length: batch }, (_, row) => flat.subarray(row * stride, (row + 1) * stride));
+
+  const evaluator: NetEvaluator = {
+    async evaluate(spatial, global, batch) {
+      const out = model.forwardPolicyValue(
+        tf.tensor4d(spatial.slice(), [batch, boardSize, boardSize, parsed.numInputChannels]),
+        tf.tensor2d(global.slice(), [batch, parsed.numInputGlobalChannels]),
+      );
+      const [policy, policyPass, value, scoreValue] = await Promise.all([
+        out.policy.data() as Promise<Float32Array>,
+        out.policyPass.data() as Promise<Float32Array>,
+        out.value.data() as Promise<Float32Array>,
+        out.scoreValue.data() as Promise<Float32Array>,
+      ]);
+      tf.dispose(out);
+      return {
+        policy: rows(policy, boardSize * boardSize, batch),
+        policyPass,
+        value: rows(value, 3, batch),
+        scoreValue: rows(scoreValue, parsed.scoreValueChannels, batch),
+      };
+    },
+  };
+
+  await serveEvals(memory, controlAddress, evaluator, {
     onEval: (stats) => parentPort!.postMessage({ kind: 'stats', stats }),
   });
 }

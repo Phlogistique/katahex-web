@@ -2,12 +2,10 @@
 //
 // The engine's JS backend (katahex/cpp/neuralnet/jsbackend.cpp) writes its inputs
 // into the shared wasm memory and blocks on one atomic word. This reads them,
-// evaluates the net with TensorFlow.js, writes the outputs back and wakes it.
-// Field offsets and states are the two halves of the same protocol; keep them in
-// step with the C++.
+// evaluates the net, writes the outputs back and wakes it. Field offsets and
+// states are the two halves of the same protocol; keep them in step with the C++.
 
-import * as tf from '@tensorflow/tfjs';
-import type { KataGoModelV8Tf } from '../vendor/modelV8';
+import type { NetOutputs } from './webgpuModel';
 
 export const FIELD = {
   STATE: 0,
@@ -45,6 +43,11 @@ async function waitWhile(control: Int32Array, index: number, expected: number): 
 
 export type EvalStats = { evals: number; rows: number; nanos: number };
 
+/** WebGPU in a page, TensorFlow.js under node. Spatial input is NHWC. */
+export type NetEvaluator = {
+  evaluate(spatial: Float32Array, global: Float32Array, batch: number): Promise<NetOutputs>;
+};
+
 /**
  * Runs until `stopped()` returns true, which is only checked between requests.
  * The board must fill the net's input tensor: the port of KataGo's net does not
@@ -56,7 +59,7 @@ export type EvalStats = { evals: number; rows: number; nanos: number };
 export async function serveEvals(
   memory: WebAssembly.Memory,
   controlAddress: number,
-  model: KataGoModelV8Tf,
+  model: NetEvaluator,
   options: { stopped?: () => boolean; onEval?: (stats: EvalStats) => void } = {},
 ): Promise<void> {
   const stats: EvalStats = { evals: 0, rows: 0, nanos: 0 };
@@ -89,23 +92,18 @@ export async function serveEvals(
     }
 
     const started = performance.now();
-    const out = model.forwardPolicyValue(
-      tf.tensor4d(spatial.slice(), [batchSize, yLen, xLen, numSpatial]),
-      tf.tensor2d(global.slice(), [batchSize, numGlobal]),
-    );
-    const [policy, policyPass, value, scoreValue] = await Promise.all([
-      out.policy.data() as Promise<Float32Array>,
-      out.policyPass.data() as Promise<Float32Array>,
-      out.value.data() as Promise<Float32Array>,
-      out.scoreValue.data() as Promise<Float32Array>,
-    ]);
-    tf.dispose(out);
+    const out = await model.evaluate(spatial, global, batchSize);
 
+    // The buffer is fetched again because growing the wasm heap replaces it.
     const buffer = memory.buffer;
-    new Float32Array(buffer, control[FIELD.POLICY], batchSize * yLen * xLen).set(policy);
-    new Float32Array(buffer, control[FIELD.POLICY_PASS], batchSize).set(policyPass);
-    new Float32Array(buffer, control[FIELD.VALUE], batchSize * NUM_VALUE_CHANNELS).set(value);
-    new Float32Array(buffer, control[FIELD.SCORE_VALUE], batchSize * NUM_SCORE_VALUE_CHANNELS).set(scoreValue);
+    const write = (address: number, rows: Float32Array[], stride: number) => {
+      const all = new Float32Array(buffer, address, batchSize * stride);
+      for (let row = 0; row < batchSize; row++) all.set(rows[row], row * stride);
+    };
+    write(control[FIELD.POLICY], out.policy, yLen * xLen);
+    new Float32Array(buffer, control[FIELD.POLICY_PASS], batchSize).set(out.policyPass);
+    write(control[FIELD.VALUE], out.value, NUM_VALUE_CHANNELS);
+    write(control[FIELD.SCORE_VALUE], out.scoreValue, NUM_SCORE_VALUE_CHANNELS);
 
     stats.evals += 1;
     stats.rows += batchSize;

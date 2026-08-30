@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
 const require = createRequire(import.meta.url);
 
-const ENGINE = process.env.ENGINE ?? resolve(root, 'build-wasm-js/katahex.js');
+const ENGINE = process.env.ENGINE ?? resolve(root, 'build-wasm-js-node/katahex.js');
 const MODEL = process.env.MODEL ?? resolve(root, 'hex27x3.bin.gz');
 const CONFIG = process.env.CONFIG ?? resolve(root, 'katahex/cpp/configs/analysis_example.cfg');
 const NET_WORKER = resolve(here, '../build/netWorkerNode.cjs');
@@ -35,7 +35,7 @@ const Module = await createModule({
 
 const controlAddress = Module._katahexControlBlockAddress();
 const worker = new Worker(NET_WORKER, {
-  workerData: { memory: Module.wasmMemory, controlAddress, modelPath: MODEL },
+  workerData: { memory: Module.wasmMemory, controlAddress, modelPath: MODEL, boardSize: BOARD_SIZE },
 });
 
 let lastStats = null;
