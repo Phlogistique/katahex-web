@@ -139,9 +139,11 @@ function winogradTransformShader(t: string, board: number, batch: number,
 
 @compute @workgroup_size(64)
 fn transform(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let m = gid.x;
-  let ic = gid.y;
-  if (m >= MREAL) { return; }
+  // Threads run along the channels, which sit next to each other in memory,
+  // so the 36 loads and stores each cover whole cache lines per workgroup.
+  let ic = gid.x;
+  let m = gid.y;
+  if (ic >= CIN) { return; }
   let img = m / (TX * TX);
   let ty = (m / TX) % TX;
   let tx = m % TX;
@@ -195,9 +197,9 @@ function winogradUntransformShader(t: string, board: number, batch: number,
 
 @compute @workgroup_size(64)
 fn untransform(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let m = gid.x;
-  let oc = gid.y;
-  if (m >= MREAL) { return; }
+  let oc = gid.x;
+  let m = gid.y;
+  if (oc >= COUT) { return; }
   let img = m / (TX * TX);
   let ty = (m / TX) % TX;
   let tx = m % TX;
@@ -607,7 +609,7 @@ export class KataGoWebGpuModel {
       const v = acquire(36 * wRowsPad, 36 * wRowsPad, x.cpad);
       run(`wino-transform c${x.cpad}`,
           this.pipeline(winogradTransformShader(t, size, batch, x.cpad, wRowsPad), 'transform'),
-          [x.buffer, v.buffer], [Math.ceil(wRows / TILE), x.cpad, 1]);
+          [x.buffer, v.buffer], [Math.ceil(x.cpad / 64), wRows, 1]);
       const mm = acquire(36 * wRowsPad, 36 * wRowsPad, npad);
       run(`wino-matmul 36x${wRowsPad}x${npad}x${x.cpad}`,
           this.pipeline(matmulShader(t, wRowsPad, npad, x.cpad), 'main'),
@@ -617,7 +619,7 @@ export class KataGoWebGpuModel {
       const out = act(npad);
       run(`wino-untransform c${npad}`,
           this.pipeline(winogradUntransformShader(t, size, batch, npad, wRowsPad), 'untransform'),
-          [mm.buffer, out.buffer], [Math.ceil(wRows / TILE), npad, 1]);
+          [mm.buffer, out.buffer], [Math.ceil(npad / 64), wRows, 1]);
       release(mm);
       return out;
     };
