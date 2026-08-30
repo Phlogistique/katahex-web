@@ -336,3 +336,81 @@ Two things to know:
 - `Atomics.waitAsync` does not keep node's event loop alive, so the net worker
   needs a handle of its own or its wakeup promise never settles. Browsers have no
   such notion.
+
+## fp16 against fp32
+
+Half precision costs accuracy and buys speed. MCTS makes the trade non-obvious,
+because a search can absorb a noisier evaluation but cannot get back the visits
+it did not have time for, so the question is strength at a fixed time budget
+rather than error on one evaluation.
+
+`match.html` plays the two precisions against each other. Both engines live in
+one page, one worker each, only one searching at a time, so they see the same
+GPU. `scripts/match-headless.mjs` hands the page one game at a time and records
+the result, which makes a run resumable:
+
+    node scripts/match-headless.mjs --threads 16 --a fp16:time:1 --b fp32:time:1 \
+      --openings openings/balanced-11.json --repeats 6 --out results/time-1s.jsonl
+    node scripts/score.mjs results/time-1s.jsonl
+
+A side is `<precision>:<condition>`, the condition being `policy`, `visits:N` or
+`time:S`. Naming both sides is what lets one harness answer more than one
+question: the same precision at two visit counts prices what a doubling of
+search is worth, which is how a speed ratio becomes elo without borrowing a rule
+of thumb from go.
+
+### Games have to be paired, and openings have to be close
+
+Hex is a first-player win, so an unpaired game measures the opening. Every
+opening is played twice, once with each side as black, and the pair is scored
+together. That cancels the first-player advantage exactly, and it removes the
+reason to implement the pie rule: an engine that does not know about swapping
+would swap every good first move, which moves the bias to the other side rather
+than removing it.
+
+Pairing is not enough on its own, because a pair from a decided opening ties.
+**No first move on an 11x11 board is anywhere near even.** All 61
+rotation-distinct ones, searched at 800 visits, come out as black winrates of
+
+    row 1   a1 0.6  b1 0.6  c1 0.6  d1 0.4  e1 0.5  f1 0.5 ... k1 89.1
+    row 2   a2 16.5  b2 17.0  e2 2.4  f2 3.4  h2 3.9  i2 12.4  k2 98.4
+    row 3   a3 8.1  d3 97  e3 97  f3 95  g3 93  h3 93  j3 92  k3 6.4
+    row 5   a5 96.4  b5 99.4  c5 99.4          centre  f6 99.7
+
+The best of the 121 is `b2` at 17%, and nothing sits between 17% and 84%. From
+the centre, white is under 2% within four plies. A bigger board does not help:
+twelve sampled first moves on 13x13 give the same bimodal shape with a harder
+edge, `e2` at 3.8% and `e3` at 85.9%. With no draws the value head saturates
+against a game whose value is 0 or 1, so the fix is granularity, not size.
+
+Two moves give it. From a first move black is losing, white's replies run from
+the best, which keeps black losing, to the worst, which hands black the game, so
+one of them lands near even. `scripts/book-headless.mjs` searches each parent
+with a widened root -- the default analysis search spends almost nothing on a
+reply it dislikes, and a reply with two visits has no value worth reading -- then
+plays the most promising replies out and searches each on its own before
+believing it. `openings/balanced-11.json` is 48 positions between 38.4% and
+61.7% across 20 first moves.
+
+### Two things that corrupt the measurement
+
+**A leaked engine.** `browser.close()` does not take the page's process tree with
+it: the engine's pthread workers and its WebGPU device keep the renderer alive,
+so the tree survives, still burning CPU and still holding a device, and the next
+run measures itself against it. One leaked tree was 6:45 old and 817 MB. The same
+config measured 56-65 visits/s early in a session and 22-25 late, monotonically
+downhill -- which imitates a thread-count effect or a precision effect depending
+on the order the runs go in. `scripts/browser.mjs` drops the engines before
+closing, waits for the tree to be gone rather than trusting `close()`, and
+refuses to start while a `chrome-headless` process is alive.
+
+**Thread count.** It sets the batch size the search produces, and half precision
+is worth much more at a small batch than a large one, so it is not a detail the
+two arms can inherit. Every game records the thread count it was played at.
+
+### Statistics
+
+Most pairs tie by construction, so a normal approximation over all pairs is
+generous. `score.mjs` prints a sign test over the decisive pairs alongside it,
+and they disagree: the intuition-only arm reads as -73 elo with a 95% interval
+excluding zero, and as 1 of 7 decisive pairs, p = 0.125.
