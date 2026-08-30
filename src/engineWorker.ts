@@ -14,7 +14,8 @@ import { KataGoWebGpuModel } from './webgpuModel';
 
 export type ToEngine =
   | { kind: 'start'; boardSize: number; half: boolean; searchThreads: number;
-      batchWaitMicros: number; enginePath: string; modelPath: string }
+      batchWaitMicros: number; serverThreads: number; profile: boolean;
+      enginePath: string; modelPath: string }
   | { kind: 'query'; json: string };
 
 export type FromEngine =
@@ -26,12 +27,14 @@ export type FromEngine =
 /** Lets the evaluation graph fill in while a position is searched. */
 const NUM_ANALYSIS_THREADS = 2;
 
+
 const post = (message: FromEngine) => self.postMessage(message);
 
 /** Mostly the config the Android app writes, minus what is about a phone. */
-const config = (boardSize: number, searchThreads: number, batchWaitMicros: number) => `
+const config = (boardSize: number, searchThreads: number, batchWaitMicros: number, serverThreads: number) => `
 numAnalysisThreads = ${NUM_ANALYSIS_THREADS}
 numSearchThreadsPerAnalysisThread = ${searchThreads}
+numNNServerThreadsPerModel = ${serverThreads}
 nnMaxBatchSize = ${NUM_ANALYSIS_THREADS * searchThreads}
 nnServeBatchWaitMicros = ${batchWaitMicros}
 maxBoardXSizeForNNBuffer = ${boardSize}
@@ -56,19 +59,20 @@ type EmscriptenModule = {
   wasmMemory: WebAssembly.Memory;
   callMain(args: string[]): void;
   ccall(name: string, returns: null, argTypes: string[], args: unknown[]): void;
-  _katahexControlBlockAddress(): number;
+  _katahexControlBlockAddress(serverThreadIdx: number): number;
 };
 
 let engine: EmscriptenModule | null = null;
 const queued: string[] = [];
 
 async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<void> {
-  const { boardSize, half, searchThreads, batchWaitMicros, enginePath, modelPath } = options;
+  const { boardSize, half, searchThreads, batchWaitMicros, serverThreads, profile, enginePath, modelPath } = options;
 
   const gpu = await navigator.gpu?.requestAdapter();
-  const device = await gpu?.requestDevice({
-    requiredFeatures: half && gpu.features.has('shader-f16') ? ['shader-f16'] : [],
-  });
+  const wanted: GPUFeatureName[] = [];
+  if (half && gpu?.features.has('shader-f16')) wanted.push('shader-f16');
+  if (profile && gpu?.features.has('timestamp-query')) wanted.push('timestamp-query');
+  const device = await gpu?.requestDevice({ requiredFeatures: wanted });
   if (!device) throw new Error('no WebGPU device');
 
   // The file is fetched once and used twice: the engine reads it to learn the
@@ -93,15 +97,24 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   });
 
   module.FS.writeFile('/model.bin', raw);
-  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros));
+  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros, serverThreads));
 
   const model = new KataGoWebGpuModel(device, parseKataGoModelV8(raw), boardSize, half);
+  model.profile = profile;
 
-  // Answers evaluations for as long as the worker lives; the engine is stopped
-  // by dropping the whole worker.
-  void serveEvals(module.wasmMemory, module._katahexControlBlockAddress(), model, {
-    onEval: (stats) => post({ kind: 'stats', stats }),
-  }).catch((error) => post({ kind: 'error', message: String(error?.stack ?? error) }));
+  // Answer evaluations for as long as the worker lives; the engine is stopped
+  // by dropping the whole worker. One loop per engine server thread, so one
+  // batch is packed and read back while the GPU runs the other.
+  const stats: EvalStats = { evals: 0, rows: 0, nanos: 0 };
+  const onEval = () => post({ kind: 'stats', stats: {
+    ...stats,
+    stages: { ...model.stages },
+    kernels: profile ? [...model.gpuByLabel] : undefined,
+  } });
+  for (let idx = 0; idx < serverThreads; idx++) {
+    void serveEvals(module.wasmMemory, module._katahexControlBlockAddress(idx), model, { stats, onEval })
+      .catch((error) => post({ kind: 'error', message: String(error?.stack ?? error) }));
+  }
 
   // Returns at once: main() is on a thread of its own.
   module.callMain(['analysis', '-model', '/model.bin', '-config', '/analysis.cfg']);

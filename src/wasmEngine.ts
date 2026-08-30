@@ -40,6 +40,14 @@ export type WasmEngineOptions = {
    * are a few milliseconds behind it. Waiting for them is worth ~12%.
    */
   batchWaitMicros?: number;
+  /**
+   * Engine threads serving the net, each with an evaluation in flight. Two
+   * keep the GPU fed back to back: it runs one batch while the other is
+   * packed, submitted and read back.
+   */
+  serverThreads?: number;
+  /** Time every GPU dispatch (slower; see webgpuModel.profile). */
+  profile?: boolean;
   onStats?: (stats: EvalStats) => void;
 };
 
@@ -50,6 +58,8 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
     half = true,
     searchThreads = 16,
     batchWaitMicros = 3000,
+    serverThreads = 2,
+    profile = false,
     onStats,
   } = options;
 
@@ -69,7 +79,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
-      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, enginePath, modelPath });
+      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, profile, enginePath, modelPath });
     },
 
     query(json) {

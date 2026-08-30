@@ -373,7 +373,7 @@ function padVector(values: Float32Array, c: number): Float32Array {
 // ---------------------------------------------------------------------------
 // The model
 
-type Pass = { pipeline: GPUComputePipeline; bindGroup: GPUBindGroup; dispatch: [number, number, number] };
+type Pass = { label: string; pipeline: GPUComputePipeline; bindGroup: GPUBindGroup; dispatch: [number, number, number] };
 
 /** An activation matrix: `rows` real rows in a buffer of rowsPad x cpad. */
 type Tensor = { buffer: GPUBuffer; rows: number; rowsPad: number; cpad: number };
@@ -384,8 +384,18 @@ type Plan = {
   passes: Pass[];
   spatialIn: GPUBuffer;
   globalIn: GPUBuffer;
-  readback: GPUBuffer;
+  readbackSize: number;
   readbackLayout: { name: OutputName; offset: number; tensor: Tensor }[];
+  /** One per evaluation in flight; evaluate takes one and puts it back. */
+  readouts: Readout[];
+};
+
+/** The buffers one in-flight evaluation reads its results through. */
+type Readout = {
+  readback: GPUBuffer;
+  querySet?: GPUQuerySet;
+  queryResolve?: GPUBuffer;
+  queryReadback?: GPUBuffer;
 };
 
 export type NetOutputs = {
@@ -407,6 +417,18 @@ export class KataGoWebGpuModel {
   private readonly pipelines = new Map<string, GPUComputePipeline>();
   private readonly plans = new Map<number, Plan>();
   private readonly activations: GPUBuffer[] = [];
+
+  /** Wall time spent in each stage of evaluate, cumulative nanoseconds. With
+   * two evaluations in flight the gpu spans overlap, so they can sum past the
+   * wall clock; read them from a run with one. */
+  readonly stages = { pack: 0, gpu: 0, convert: 0 };
+  /** Per-kernel GPU time, filled only while `profile` is on. */
+  readonly gpuByLabel = new Map<string, { nanos: number; count: number }>();
+  /** Time every dispatch with timestamp queries. Needs the device created with
+   * 'timestamp-query', costs one compute pass per dispatch, and reads garbage
+   * timings unless Chrome runs with --enable-webgpu-developer-features
+   * (timestamps are quantized to uselessness otherwise). */
+  profile = false;
 
   constructor(device: GPUDevice, parsed: ParsedKataGoModelV8, size: number, half: boolean) {
     if (parsed.metaEncoderVersion !== 0) throw new Error('meta encoder not supported');
@@ -556,8 +578,9 @@ export class KataGoWebGpuModel {
     const act = (cpad: number) => acquire(rows, rowsPad, cpad);
     const vec = (cpad: number) => acquire(batch, nPad, cpad);
 
-    const run = (pipeline: GPUComputePipeline, buffers: GPUBuffer[], dispatch: [number, number, number]) => {
+    const run = (label: string, pipeline: GPUComputePipeline, buffers: GPUBuffer[], dispatch: [number, number, number]) => {
       passes.push({
+        label,
         pipeline,
         bindGroup: device.createBindGroup({
           layout: pipeline.getBindGroupLayout(0),
@@ -571,7 +594,8 @@ export class KataGoWebGpuModel {
     const matmul = (x: Tensor, weightName: string, nOut: number): Tensor => {
       const npad = padC(nOut);
       const out = acquire(x.rows, x.rowsPad, npad);
-      run(this.pipeline(matmulShader(t, x.rowsPad, npad, x.cpad), 'main'),
+      run(`matmul ${x.rowsPad}x${npad}x${x.cpad}`,
+          this.pipeline(matmulShader(t, x.rowsPad, npad, x.cpad), 'main'),
           [x.buffer, this.weight(weightName), out.buffer],
           [Math.ceil(npad / TILE), x.rowsPad / TILE, 1]);
       return out;
@@ -581,15 +605,18 @@ export class KataGoWebGpuModel {
     const conv3x3 = (x: Tensor, weightName: string, nOut: number): Tensor => {
       const npad = padC(nOut);
       const v = acquire(36 * wRowsPad, 36 * wRowsPad, x.cpad);
-      run(this.pipeline(winogradTransformShader(t, size, batch, x.cpad, wRowsPad), 'transform'),
+      run(`wino-transform c${x.cpad}`,
+          this.pipeline(winogradTransformShader(t, size, batch, x.cpad, wRowsPad), 'transform'),
           [x.buffer, v.buffer], [Math.ceil(wRows / TILE), x.cpad, 1]);
       const mm = acquire(36 * wRowsPad, 36 * wRowsPad, npad);
-      run(this.pipeline(matmulShader(t, wRowsPad, npad, x.cpad), 'main'),
+      run(`wino-matmul 36x${wRowsPad}x${npad}x${x.cpad}`,
+          this.pipeline(matmulShader(t, wRowsPad, npad, x.cpad), 'main'),
           [v.buffer, this.weight(weightName), mm.buffer],
           [Math.ceil(npad / TILE), wRowsPad / TILE, 36]);
       release(v);
       const out = act(npad);
-      run(this.pipeline(winogradUntransformShader(t, size, batch, npad, wRowsPad), 'untransform'),
+      run(`wino-untransform c${npad}`,
+          this.pipeline(winogradUntransformShader(t, size, batch, npad, wRowsPad), 'untransform'),
           [mm.buffer, out.buffer], [Math.ceil(wRows / TILE), npad, 1]);
       release(mm);
       return out;
@@ -601,7 +628,7 @@ export class KataGoWebGpuModel {
     const bnAct = (x: Tensor, bnName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
           [x.buffer, this.weight(`${bnName}.scale`), this.weight(`${bnName}.bias`), out.buffer],
           [Math.ceil(elems / 256), 1, 1]);
       return out;
@@ -611,7 +638,7 @@ export class KataGoWebGpuModel {
     const biasAct = (x: Tensor, biasName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
           [x.buffer, this.weight('ones'), this.weight(biasName), out.buffer],
           [Math.ceil(elems / 256), 1, 1]);
       return out;
@@ -621,7 +648,7 @@ export class KataGoWebGpuModel {
     const add = (a: Tensor, b: Tensor): Tensor => {
       const out = acquire(a.rows, a.rowsPad, a.cpad);
       const elems = a.rowsPad * a.cpad;
-      run(this.pipeline(addShader(t, elems), 'main'),
+      run('add', this.pipeline(addShader(t, elems), 'main'),
           [a.buffer, b.buffer, out.buffer], [Math.ceil(elems / 256), 1, 1]);
       return out;
     };
@@ -629,7 +656,7 @@ export class KataGoWebGpuModel {
     /** x [rows, cpad] plus a per-image [batch, cpad] channel bias. */
     const addBias = (x: Tensor, bias: Tensor): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
-      run(this.pipeline(addBiasShader(t, batch, hw, x.cpad), 'main'),
+      run('addBias', this.pipeline(addBiasShader(t, batch, hw, x.cpad), 'main'),
           [x.buffer, bias.buffer, out.buffer], [Math.ceil(batch * hw * x.cpad / 256), 1, 1]);
       return out;
     };
@@ -638,7 +665,7 @@ export class KataGoWebGpuModel {
     const factor2 = (size - 14) ** 2 * 0.01 - 0.1;
     const gpool = (x: Tensor, kind: 'gpool' | 'value'): Tensor => {
       const out = acquire(batch, nPad, 3 * x.cpad);
-      run(this.pipeline(gpoolShader(t, kind, batch, hw, x.cpad, factor1, factor2), 'main'),
+      run(`gpool-${kind}`, this.pipeline(gpoolShader(t, kind, batch, hw, x.cpad, factor1, factor2), 'main'),
           [x.buffer, out.buffer], [Math.ceil(x.cpad / 64), batch, 1]);
       return out;
     };
@@ -740,15 +767,13 @@ export class KataGoWebGpuModel {
       readbackLayout.push({ name, offset, tensor });
       offset += roundUp(tensor.rowsPad * tensor.cpad * this.width, 4);
     }
-    const readback = device.createBuffer({
-      size: offset, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-
     return {
       passes,
       spatialIn: spatial.buffer,
       globalIn: global.buffer,
-      readback,
+      readbackSize: offset,
       readbackLayout,
+      readouts: [],
     };
   }
 
@@ -787,26 +812,62 @@ export class KataGoWebGpuModel {
     }
     const cast = (data: Float32Array) =>
       (this.half ? Uint16Array.from(data, toHalf) : data) as Uint16Array<ArrayBuffer> | Float32Array<ArrayBuffer>;
+    const started = performance.now();
     this.device.queue.writeBuffer(plan.spatialIn, 0, cast(spatialPacked));
     this.device.queue.writeBuffer(plan.globalIn, 0, cast(globalPacked));
 
+    // Input and activation buffers are shared between evaluations in flight;
+    // that is safe because writeBuffer and submit execute in queue order. Only
+    // the readout is taken out of the pool for the whole call.
+    const readout = plan.readouts.pop() ?? this.makeReadout(plan);
+
     const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    for (const p of plan.passes) {
-      pass.setPipeline(p.pipeline);
-      pass.setBindGroup(0, p.bindGroup);
-      pass.dispatchWorkgroups(...p.dispatch);
+    if (this.profile && readout.querySet) {
+      plan.passes.forEach((p, i) => {
+        const pass = encoder.beginComputePass({ timestampWrites: {
+          querySet: readout.querySet!, beginningOfPassWriteIndex: 2 * i, endOfPassWriteIndex: 2 * i + 1 } });
+        pass.setPipeline(p.pipeline);
+        pass.setBindGroup(0, p.bindGroup);
+        pass.dispatchWorkgroups(...p.dispatch);
+        pass.end();
+      });
+    } else {
+      const pass = encoder.beginComputePass();
+      for (const p of plan.passes) {
+        pass.setPipeline(p.pipeline);
+        pass.setBindGroup(0, p.bindGroup);
+        pass.dispatchWorkgroups(...p.dispatch);
+      }
+      pass.end();
     }
-    pass.end();
     for (const { offset, tensor } of plan.readbackLayout) {
-      encoder.copyBufferToBuffer(tensor.buffer, 0, plan.readback, offset,
+      encoder.copyBufferToBuffer(tensor.buffer, 0, readout.readback, offset,
         tensor.rowsPad * tensor.cpad * this.width);
     }
+    if (this.profile && readout.querySet) {
+      encoder.resolveQuerySet(readout.querySet, 0, 2 * plan.passes.length, readout.queryResolve!, 0);
+      encoder.copyBufferToBuffer(readout.queryResolve!, 0, readout.queryReadback!, 0,
+        readout.queryReadback!.size);
+    }
     this.device.queue.submit([encoder.finish()]);
+    const submitted = performance.now();
 
-    await plan.readback.mapAsync(GPUMapMode.READ);
-    const raw = plan.readback.getMappedRange().slice(0);
-    plan.readback.unmap();
+    await readout.readback.mapAsync(GPUMapMode.READ);
+    const raw = readout.readback.getMappedRange().slice(0);
+    readout.readback.unmap();
+    const mapped = performance.now();
+
+    if (this.profile && readout.queryReadback) {
+      await readout.queryReadback.mapAsync(GPUMapMode.READ);
+      const stamps = new BigInt64Array(readout.queryReadback.getMappedRange().slice(0));
+      readout.queryReadback.unmap();
+      plan.passes.forEach((p, i) => {
+        const entry = this.gpuByLabel.get(p.label) ?? { nanos: 0, count: 0 };
+        entry.nanos += Number(stamps[2 * i + 1] - stamps[2 * i]);
+        entry.count += 1;
+        this.gpuByLabel.set(p.label, entry);
+      });
+    }
     const asFloats = (offset: number, elems: number): Float32Array => {
       return this.half
         ? Float32Array.from(new Uint16Array(raw, offset, elems), fromHalf)
@@ -828,12 +889,37 @@ export class KataGoWebGpuModel {
           Float32Array.from({ length: channels }, (_, c) => column(image, c)));
       }
     }
+    plan.readouts.push(readout);
+    this.stages.pack += (submitted - started) * 1e6;
+    this.stages.gpu += (mapped - submitted) * 1e6;
+    this.stages.convert += (performance.now() - mapped) * 1e6;
     return out as NetOutputs;
+  }
+
+  private makeReadout(plan: Plan): Readout {
+    const readback = this.device.createBuffer({
+      size: plan.readbackSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    if (!this.profile || !this.device.features.has('timestamp-query')) return { readback };
+    const stamps = 2 * plan.passes.length;
+    return {
+      readback,
+      querySet: this.device.createQuerySet({ type: 'timestamp', count: stamps }),
+      queryResolve: this.device.createBuffer({
+        size: 8 * stamps, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
+      queryReadback: this.device.createBuffer({
+        size: 8 * stamps, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }),
+    };
   }
 
   dispose(): void {
     for (const buffer of this.weights.values()) buffer.destroy();
-    for (const plan of this.plans.values()) plan.readback.destroy();
+    for (const plan of this.plans.values())
+      for (const r of plan.readouts) {
+        r.readback.destroy();
+        r.querySet?.destroy();
+        r.queryResolve?.destroy();
+        r.queryReadback?.destroy();
+      }
     for (const buffer of this.activations) buffer.destroy();
   }
 }

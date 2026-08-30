@@ -41,7 +41,14 @@ async function waitWhile(control: Int32Array, index: number, expected: number): 
   }
 }
 
-export type EvalStats = { evals: number; rows: number; nanos: number };
+export type EvalStats = {
+  evals: number;
+  rows: number;
+  nanos: number;
+  /** Filled in by the engine worker from the model, not by serveEvals. */
+  stages?: { pack: number; gpu: number; convert: number };
+  kernels?: [string, { nanos: number; count: number }][];
+};
 
 /** WebGPU in a page, TensorFlow.js under node. Spatial input is NHWC. */
 export type NetEvaluator = {
@@ -60,9 +67,10 @@ export async function serveEvals(
   memory: WebAssembly.Memory,
   controlAddress: number,
   model: NetEvaluator,
-  options: { stopped?: () => boolean; onEval?: (stats: EvalStats) => void } = {},
+  options: { stopped?: () => boolean; onEval?: (stats: EvalStats) => void; stats?: EvalStats } = {},
 ): Promise<void> {
-  const stats: EvalStats = { evals: 0, rows: 0, nanos: 0 };
+  // Shared between the serve loops when there are several, so it totals them.
+  const stats = options.stats ?? { evals: 0, rows: 0, nanos: 0 };
   let checkedMask = false;
 
   while (!options.stopped?.()) {

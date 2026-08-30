@@ -26,12 +26,16 @@ SYSROOT=$EMSDK/upstream/emscripten/cache/sysroot
 if [ "$TARGET" = node ]; then
   ENVFLAGS="-sNODERAWFS=1 -sENVIRONMENT=node,worker"
   CXXEXTRA=
+  POOL=16
   PROXY=
 else
   # EXPORT_ES6 keeps the name katahex.js, which the file itself uses to start
   # its pthread workers, so it must keep it where it is served from too.
   ENVFLAGS="-sFORCE_FILESYSTEM=1 -sENVIRONMENT=web,worker -sEXPORT_ES6=1"
   CXXEXTRA=-DKATAHEX_QUERY_QUEUE
+  # Enough workers for 2 x 32 search threads plus the serving and main threads;
+  # a thread past the pool is created lazily through the busiest thread there is.
+  POOL=80
   PROXY=-sPROXY_TO_PTHREAD=1
 fi
 
@@ -55,7 +59,7 @@ emcmake cmake -S "$KATAHEX/cpp" -B "$BUILD" \
   -DCMAKE_CXX_FLAGS="-pthread -msimd128 -include endian.h -g0 $CXXEXTRA" \
   -DCMAKE_EXE_LINKER_FLAGS="-pthread -O3 -g0 \
     -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB -sSTACK_SIZE=8MB \
-    -sPTHREAD_POOL_SIZE=16 -sEXIT_RUNTIME=1 \
+    -sPTHREAD_POOL_SIZE=$POOL -sEXIT_RUNTIME=1 \
     -sMODULARIZE=1 -sINVOKE_RUN=0 $PROXY \
     -sEXPORTED_RUNTIME_METHODS=callMain,ccall,wasmMemory,HEAPF32,HEAP32,FS \
     $ENVFLAGS"
