@@ -231,12 +231,26 @@ trusting the name.
 Sweeping in a reversed order -- 8, 16, 32, 32, 16, 8 -- with nothing else on the
 machine, three openings each, cache cleared, median of the six samples:
 
-| search threads | page, fp16 | with the 3 ms batch wait | native OpenCL |
-| --- | --- | --- | --- |
-| 8 | 65 | | ~60 (between its 4 and its 16) |
-| 16 | 79-83 | 90 | 83 |
-| 32 | 86 | 96 | 105 |
-| 64 | ~61, and unstable | | ~115 |
+| search threads | page, fp16 | + 3 ms batch wait | + coalesced Winograd | native OpenCL |
+| --- | --- | --- | --- | --- |
+| 8 | 65 | | | ~60 (between its 4 and its 16) |
+| 16 | 79-83 | 90 | | 83 |
+| 32 | 86 | 96 | ~140 | 105 |
+| 64 | ~61, and unstable | | ~136, a wash against 32 | ~115 |
+
+**The big one was found by the per-kernel profile** (`?profile`, timestamp
+queries on every dispatch): the Winograd transform and untransform were 41% of
+all GPU time while the matmuls they feed ran at the expected ~650 GFLOP/s. Their
+threads walked the tiles, putting neighbors ~400 bytes apart in memory -- one
+f16 per cache line on kernels that are nothing but memory traffic. Walking the
+channels instead cut them 8x, to 8% of GPU time, and took the search from ~97
+to ~143 visits/s on the same throttled GPU. The page now beats the native
+OpenCL build by a third on the same laptop.
+
+**Two server threads keep two evaluations in flight** (`?servers=N`, 2 by
+default): the GPU runs one batch while the other is packed, submitted and read
+back. Paired A/B: +5%, which is the pack-and-readback share of the wall clock,
+exactly what the stage timers say evaluate spends outside the GPU.
 
 **The batch wait exists because batches averaged exactly half their size.**
 Instrumenting the batches (`window.engineStats`) showed the GPU 97-99% busy in
@@ -270,7 +284,7 @@ Killing them moved every point on the curve up and restored the climb.
 
 Those numbers are one significant digit. **Measuring anything here is harder than
 it looks, and every figure in this section survived only because it was measured
-in an order that runs against its own bias.** Two traps, both hit:
+in an order that runs against its own bias.** Three traps, all hit:
 
 - **A closed browser is not a dead browser.** Playwright's `browser.close()`
   leaves the whole process tree alive when the page holds a wasm engine: it has
@@ -286,6 +300,11 @@ in an order that runs against its own bias.** Two traps, both hit:
   instead of being read as an effect. This is what caught the leak: the same
   thread count measured three times slower at the end of a session than at the
   start.
+- **The GPU throttles from 950 MHz down to ~400-600 under sustained load**
+  (`/sys/class/drm/card1/gt_cur_freq_mhz`), so absolute numbers depend on how
+  hot the machine already is, and block-ordered comparisons read heat as an
+  effect. Any A/B here has to alternate whole runs between the two configs
+  (`bench2.py` style) and compare pairwise.
 
 The fp16-against-fp32 ratio is deliberately not quoted here. It was measured at
 1.6x, in a block of fp16 runs followed by a block of fp32 runs, which is exactly
