@@ -231,24 +231,34 @@ trusting the name.
 Sweeping in a reversed order -- 8, 16, 32, 32, 16, 8 -- with nothing else on the
 machine, three openings each, cache cleared, median of the six samples:
 
-| search threads | page, fp16 | native OpenCL |
-| --- | --- | --- |
-| 8 | 65 | ~60 (between its 4 and its 16) |
-| 16 | 79 | 83 |
-| 32 | 86 | 105 |
-| 64 | ~61, and unstable | ~115 |
+| search threads | page, fp16 | with the 3 ms batch wait | native OpenCL |
+| --- | --- | --- | --- |
+| 8 | 65 | | ~60 (between its 4 and its 16) |
+| 16 | 79-83 | 90 | 83 |
+| 32 | 86 | 96 | 105 |
+| 64 | ~61, and unstable | | ~115 |
 
-The page tracks native to within a few percent at 8 and 16 threads and reaches 82%
-of it at 32. Where it differs is the far end: native is still gaining at 64 where
-the page has fallen apart, because every thread here is a worker and sixty of them
-cost more than they bring.
+**The batch wait exists because batches averaged exactly half their size.**
+Instrumenting the batches (`window.engineStats`) showed the GPU 97-99% busy in
+every config while the average batch sat at half the thread count, in
+complementary pairs (10 and 22, 7 and 25): when a batch of K returns, its K
+threads re-queue a few milliseconds later, but the serving thread grabs the
+other threads immediately and the two groups never merge. `nnServeBatchWaitMicros`
+lets the serving thread wait that long for a partial batch to keep filling (a
+full one is run at once). At 3 ms nearly every batch is exactly full, the GPU
+does ~110 rows/s at batch 32 instead of ~92 at batch 16, and the search is worth
+12% more. So the page is GPU-bound throughout -- the search itself never was the
+limit at 16 or 32 threads -- and reaches 91% of native at 32. Native is still
+gaining at 64 where the page has fallen apart, because every thread here is a
+worker and sixty of them cost more than they bring.
 
 **Sixteen is what it ships with, not thirty-two.** A lone search is fastest at 32,
 but the ui asks for two positions at once -- the evaluation graph fills in while a
 position is searched -- and the threads of both searches queue against the same
 net, so what sets the batch is the total. Two analysis threads of 16 stay at the
 32 that measures best; two of 32 would spend that time in the 64-thread regime,
-which is worse than either.
+which is worse than either. The batch wait ships at 3 ms (`?batchwait=N` to
+override).
 
 That the curve keeps climbing past 16 at all is a late correction. Measured
 earlier the same day it flattened at 66 from 16 threads on, which reads exactly

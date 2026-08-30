@@ -26,15 +26,18 @@ export type WasmEngineOptions = {
   /** Half precision: twice the speed, and the error the native engine also has. */
   half?: boolean;
   /**
-   * Threads searching one position. They are what fills the net's batches: 8
-   * threads search at 65 visits/s, 16 at 79, 32 at 86. Sixteen rather than 32
-   * because two positions are searched at once and their threads queue against
-   * the same net, and 64 threads between them is slower than 32.
+   * Threads searching one position. They are what fills the net's batches: a
+   * lone search runs at 90 visits/s with 16 threads and 96 with 32. Sixteen
+   * rather than 32 because two positions are searched at once and their
+   * threads queue against the same net, and 64 threads between them is slower
+   * than 32.
    */
   searchThreads?: number;
   /**
-   * How long the net's serving thread lets a partial batch keep filling,
-   * in microseconds. A batch's stragglers are a few milliseconds behind it.
+   * How long the net's serving thread lets a partial batch keep filling, in
+   * microseconds. Without it batches average half the thread count: the serve
+   * loop takes what is queued the instant it wakes, and a batch's stragglers
+   * are a few milliseconds behind it. Waiting for them is worth ~12%.
    */
   batchWaitMicros?: number;
   onStats?: (stats: EvalStats) => void;
@@ -46,7 +49,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
     modelPath = '/hex27x3.bin.gz',
     half = true,
     searchThreads = 16,
-    batchWaitMicros = 0,
+    batchWaitMicros = 3000,
     onStats,
   } = options;
 
