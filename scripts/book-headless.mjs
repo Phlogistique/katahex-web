@@ -29,6 +29,7 @@ const flag = (name, fallback) => {
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const size = Number(flag('size', '11'));
 const threads = Number(flag('threads', '16'));
+const batchWait = Number(flag('batchwait', '3000'));
 const parentVisits = Number(flag('parent-visits', '1200'));
 const checkVisits = Number(flag('check-visits', '800'));
 const perParent = Number(flag('per-parent', '2'));
@@ -79,7 +80,7 @@ const nextJob = () => {
   return secondPass.shift() ?? null;
 };
 
-const { browser, page } = await open(`${BASE}/positions.html?size=${size}&threads=${threads}`, {
+const { browser, page } = await open(`${BASE}/positions.html?size=${size}&threads=${threads}&batchwait=${batchWait}`, {
   onError: (message) => console.error('[page]', message),
   expose: {
     nextJob,

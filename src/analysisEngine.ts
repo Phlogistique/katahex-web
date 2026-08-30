@@ -38,6 +38,11 @@ export class AnalysisEngine {
     // a small batch than a large one, so the two arms of a match have to agree
     // on it and a result has to record it.
     readonly searchThreads = 16,
+    // Waiting a moment before serving a batch is what keeps it full: without it
+    // a returning batch's threads re-queue behind the ones already waiting and
+    // the two groups alternate at half the thread count forever. It changes the
+    // batch size, and so what half precision is worth, so a match names it.
+    readonly batchWaitMicros = 3000,
   ) {
     this.worker = new Worker(new URL('./engineWorker.ts', import.meta.url), { type: 'module' });
     let ready!: () => void;
@@ -58,6 +63,7 @@ export class AnalysisEngine {
     const start: ToEngine = {
       kind: 'start', boardSize: size, half: precision === 'fp16',
       searchThreads: this.searchThreads,
+      batchWaitMicros: this.batchWaitMicros,
       enginePath: '/katahex.js', modelPath: '/hex27x3.bin.gz',
     };
     this.worker.postMessage(start);

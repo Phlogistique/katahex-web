@@ -21,6 +21,7 @@ const flag = (name, fallback) => {
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const size = Number(flag('size', '11'));
 const threads = Number(flag('threads', '16'));
+const batchWait = Number(flag('batchwait', '3000'));
 const visits = Number(flag('visits', '1000'));
 const keep = Number(flag('keep', '20'));
 const sweepPath = flag('sweep');
@@ -53,7 +54,7 @@ const queue = distinct.filter((move) => !rated.some((row) => row.move === move))
 console.error(`${queue.length} first moves to rate, ${rated.length} already done`);
 
 if (queue.length) {
-  const { browser, page } = await open(`${BASE}/positions.html?size=${size}&threads=${threads}`, {
+  const { browser, page } = await open(`${BASE}/positions.html?size=${size}&threads=${threads}&batchwait=${batchWait}`, {
     onError: (message) => console.error('[page]', message),
     expose: {
       nextJob: () => {

@@ -20,6 +20,7 @@ const flag = (name, fallback) => {
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const size = Number(flag('size', '11'));
 const threads = Number(flag('threads', '16'));
+const batchWait = Number(flag('batchwait', '3000'));
 const every = Number(flag('every', '3'));
 const out = flag('out');
 
@@ -55,7 +56,7 @@ const queue = jobs.filter((job) => !done.has(job.id));
 console.error(`${queue.length} positions to ask, ${done.size} already recorded`);
 if (!queue.length) process.exit(0);
 
-const { browser, page } = await open(`${BASE}/agree.html?size=${size}&threads=${threads}`, {
+const { browser, page } = await open(`${BASE}/agree.html?size=${size}&threads=${threads}&batchwait=${batchWait}`, {
   onError: (message) => console.error('[page]', message),
   expose: {
     nextJob: () => queue.shift() ?? null,

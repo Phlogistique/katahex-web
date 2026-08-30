@@ -36,6 +36,7 @@ const flag = (name, fallback) => {
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const size = Number(flag('size', '11'));
 const threads = Number(flag('threads', '16'));
+const batchWait = Number(flag('batchwait', '3000'));
 const repeats = Number(flag('repeats', '1'));
 const out = flag('out');
 const openings = JSON.parse(readFileSync(flag('openings'), 'utf8'));
@@ -73,7 +74,7 @@ console.error(`${queue.length} games to play, ${done.size} already recorded`);
 if (!queue.length) process.exit(0);
 
 let played = 0;
-const { browser, page } = await open(`${BASE}/match.html?size=${size}&threads=${threads}`, {
+const { browser, page } = await open(`${BASE}/match.html?size=${size}&threads=${threads}&batchwait=${batchWait}`, {
   onError: (message) => console.error('[page]', message),
   expose: {
     nextJob: () => queue.shift() ?? null,

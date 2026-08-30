@@ -16,6 +16,7 @@ export type Result = { id: string; moves: string[]; fp16: Answer; fp32: Answer; 
 const params = new URLSearchParams(location.search);
 const SIZE = Number(params.get('size') ?? 11);
 const THREADS = Number(params.get('threads') ?? 16);
+const BATCH_WAIT = Number(params.get('batchwait') ?? 3000);
 const { driver, log } = bridge<Job, Result>();
 
 async function ask(engine: AnalysisEngine, job: Job): Promise<Answer> {
@@ -34,8 +35,8 @@ async function ask(engine: AnalysisEngine, job: Job): Promise<Answer> {
 
 async function main() {
   const engines: Record<Precision, AnalysisEngine> = {
-    fp16: new AnalysisEngine('fp16', SIZE, log, THREADS),
-    fp32: new AnalysisEngine('fp32', SIZE, log, THREADS),
+    fp16: new AnalysisEngine('fp16', SIZE, log, THREADS, BATCH_WAIT),
+    fp32: new AnalysisEngine('fp32', SIZE, log, THREADS, BATCH_WAIT),
   };
   (globalThis as { stopEngines?: () => void }).stopEngines =
     () => { engines.fp16.stop(); engines.fp32.stop(); };
