@@ -228,26 +228,35 @@ trusting the name.
 
 ### Search speed, 11x11 on the Iris Xe laptop
 
-Sweeping 8, 16, 32, 32, 16, 8 with nothing else on the machine, three openings
-each, cache cleared, mean of a thread count's two blocks:
+Sweeping in a reversed order -- 8, 16, 32, 32, 16, 8 -- with nothing else on the
+machine, three openings each, cache cleared, median of the six samples:
 
 | search threads | page, fp16 | native OpenCL |
 | --- | --- | --- |
-| 8 | 55 | ~60 (between its 4 and its 16) |
-| 16 | 65 | 83 |
-| 32 | 66 | 105 |
+| 8 | 65 | ~60 (between its 4 and its 16) |
+| 16 | 79 | 83 |
+| 32 | 86 | 105 |
+| 64 | ~61, and unstable | ~115 |
 
-Sixteen is the default: it is worth 18% over eight, and thirty-two buys nothing
-for twice the workers.
+The page tracks native to within a few percent at 8 and 16 threads and reaches 82%
+of it at 32. Where it differs is the far end: native is still gaining at 64 where
+the page has fallen apart, because every thread here is a worker and sixty of them
+cost more than they bring.
 
-The shape is the result. Threads are what fills the net's batches, and natively
-that keeps paying all the way to 32 -- but the page stops gaining after 16 and
-sits at 66 whatever it is given. It is not the net that runs out: that
-benchmarks at 120 evaluations a second, well above the 66 the search asks for.
-So what the page is short of is not GPU and not batch size, it is the search
-itself -- the tree descent, the backup and the futex traffic between the
-workers, all in WebAssembly. That is also why the gap to native widens with
-threads rather than closing.
+**Sixteen is what it ships with, not thirty-two.** A lone search is fastest at 32,
+but the ui asks for two positions at once -- the evaluation graph fills in while a
+position is searched -- and the threads of both searches queue against the same
+net, so what sets the batch is the total. Two analysis threads of 16 stay at the
+32 that measures best; two of 32 would spend that time in the 64-thread regime,
+which is worse than either.
+
+That the curve keeps climbing past 16 at all is a late correction. Measured
+earlier the same day it flattened at 66 from 16 threads on, which reads exactly
+like a search too slow in WebAssembly to feed the net. It was not: four
+`python3 -c "x=0 while True: x+=1"` processes, twelve days old and belonging to
+nobody, were holding a third of the machine. The search is the part that is
+CPU-bound by construction, so it degraded first and looked like a wasm ceiling.
+Killing them moved every point on the curve up and restored the climb.
 
 Those numbers are one significant digit. **Measuring anything here is harder than
 it looks, and every figure in this section survived only because it was measured

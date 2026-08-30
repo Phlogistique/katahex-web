@@ -27,8 +27,9 @@ export type WasmEngineOptions = {
   half?: boolean;
   /**
    * Threads searching one position. They are what fills the net's batches: 8
-   * threads search at 55 visits/s, 16 at 65, and 32 no faster than 16. Each one
-   * is a worker.
+   * threads search at 65 visits/s, 16 at 79, 32 at 86. Sixteen rather than 32
+   * because two positions are searched at once and their threads queue against
+   * the same net, and 64 threads between them is slower than 32.
    */
   searchThreads?: number;
   onStats?: (stats: EvalStats) => void;
