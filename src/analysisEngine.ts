@@ -60,14 +60,22 @@ export class AnalysisEngine {
   /** Resolves when the engine has logged that it is up; queries before it are queued anyway. */
   ready(): Promise<void> { return this.started; }
 
-  analyse(moves: string[], condition: Condition): Promise<Reply> {
+  analyse(
+    moves: string[],
+    condition: Condition,
+    overrides: Record<string, unknown> = {},
+  ): Promise<Reply> {
     const id = `${this.precision}-${++this.seq}`;
-    const search =
+    const limits =
       condition.kind === 'policy' ? { maxVisits: 1, includePolicy: true } :
       condition.kind === 'visits' ? { maxVisits: condition.visits } :
       // A time limit needs a visit limit it will never reach: whichever comes
       // first ends the search.
-      { maxVisits: 1e9, overrideSettings: { maxTime: condition.seconds } };
+      { maxVisits: 1e9 };
+    const overrideSettings = {
+      ...(condition.kind === 'time' ? { maxTime: condition.seconds } : {}),
+      ...overrides,
+    };
 
     const query: ToEngine = {
       kind: 'query',
@@ -79,7 +87,8 @@ export class AnalysisEngine {
         rules: 'tromp-taylor',
         komi: 0,
         analyzeTurns: [moves.length],
-        ...search,
+        ...limits,
+        ...(Object.keys(overrideSettings).length ? { overrideSettings } : {}),
       }),
     };
 

@@ -1,11 +1,18 @@
 // Runs the fp16-against-fp32 match in headless Chrome and records the games.
 //
-//   node scripts/match-headless.mjs --condition time:1 --repeats 2 \
+//   node scripts/match-headless.mjs --a fp16:time:1 --b fp32:time:1 --repeats 2 \
 //     --openings openings/balanced-11.json --out results/time-1s.jsonl
 //
-// Conditions: policy | visits:N | time:S. Every opening is played twice per
-// repeat, once with each precision as black, so the pair cancels the
-// first-player advantage without needing a swap rule.
+// A side is <precision>:<condition>, where the condition is policy, visits:N or
+// time:S. Naming both sides is what lets the same harness answer more than one
+// question: fp16 against fp32 at the same time budget is the comparison, at the
+// same visit count is the precision penalty on its own, and fp32 against itself
+// at N and 2N visits is what a doubling of search is worth, which is how a
+// speed ratio becomes elo.
+//
+// Every opening is played twice per repeat, once with each side as black, and
+// scored as a pair. That cancels the first-player advantage without needing a
+// swap rule.
 //
 // Needs a vite server on the katahex-web page (npm run dev) and the symlinks in
 // public/ for katahex.js, katahex.wasm and the net. Results are appended one
@@ -32,13 +39,17 @@ const repeats = Number(flag('repeats', '1'));
 const out = flag('out');
 const openings = JSON.parse(readFileSync(flag('openings'), 'utf8'));
 
-const condition = (() => {
-  const [kind, value] = flag('condition').split(':');
-  if (kind === 'policy') return { kind };
-  if (kind === 'visits') return { kind, visits: Number(value) };
-  if (kind === 'time') return { kind, seconds: Number(value) };
+const side = (spec) => {
+  const [precision, kind, value] = spec.split(':');
+  if (precision !== 'fp16' && precision !== 'fp32') throw new Error(`unknown precision: ${precision}`);
+  if (kind === 'policy') return { precision, condition: { kind } };
+  if (kind === 'visits') return { precision, condition: { kind, visits: Number(value) } };
+  if (kind === 'time') return { precision, condition: { kind, seconds: Number(value) } };
   throw new Error(`unknown condition: ${kind}`);
-})();
+};
+
+const a = side(flag('a'));
+const b = side(flag('b'));
 
 // Playing each opening from both sides is what makes a pair scorable: hex is a
 // first-player win, so only the games where one precision converts an opening
@@ -46,9 +57,8 @@ const condition = (() => {
 const jobs = [];
 for (let repeat = 0; repeat < repeats; repeat++) {
   for (const opening of openings) {
-    for (const black of ['fp16', 'fp32']) {
-      jobs.push({ id: `${opening.join('-')}/${black}/${repeat}`, opening, black, condition });
-    }
+    jobs.push({ id: `${opening.join('-')}/${repeat}/a`, opening, black: a, white: b });
+    jobs.push({ id: `${opening.join('-')}/${repeat}/b`, opening, black: b, white: a });
   }
 }
 

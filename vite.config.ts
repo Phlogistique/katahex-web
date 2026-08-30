@@ -7,7 +7,7 @@ const headers = {
 };
 
 export default defineConfig({
-  build: { rollupOptions: { input: ['index.html', 'micro.html', 'winograd.html', 'match.html', 'openings.html'] } },
+  build: { rollupOptions: { input: ['index.html', 'micro.html', 'winograd.html', 'match.html', 'positions.html', 'agree.html'] } },
   preview: { headers },
   server: {
     host: true,

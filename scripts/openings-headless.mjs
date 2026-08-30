@@ -51,13 +51,19 @@ if (queue.length) {
   });
   const page = await browser.newPage();
   page.on('pageerror', (error) => console.error('[page]', error.message));
-  await page.exposeFunction('nextJob', () => queue.shift() ?? null);
-  await page.exposeFunction('note', (line) => void console.error(line));
-  await page.exposeFunction('report', (result) => {
-    appendFileSync(sweepPath, JSON.stringify(result) + '\n');
-    rated.push(result);
+  await page.exposeFunction('nextJob', () => {
+    const job = queue.shift();
+    return job ? { id: job.move, moves: [job.move], visits: job.visits } : null;
   });
-  await page.goto(`${BASE}/openings.html?size=${size}`);
+  await page.exposeFunction('note', (line) => void console.error(line));
+  await page.exposeFunction('report', (position) => {
+    // The side to move after black's first move is white, so black's share is
+    // what is left over.
+    const row = { move: position.id, blackWinrate: 1 - position.winrate, visits: position.visits };
+    appendFileSync(sweepPath, JSON.stringify(row) + '\n');
+    rated.push(row);
+  });
+  await page.goto(`${BASE}/positions.html?size=${size}`);
   await page.waitForFunction(
     () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
     null, { timeout: 0 });

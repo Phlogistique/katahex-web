@@ -10,17 +10,19 @@ import { AnalysisEngine, type Condition, type Precision } from './analysisEngine
 import { bridge } from './harness';
 import { connected, moveName, other, stones, type Player } from './hex';
 
-export type Job = { id: string; opening: string[]; black: Precision; condition: Condition };
+/** A side of the match: which net, and how much thinking each move gets. */
+export type Side = { precision: Precision; condition: Condition };
+
+export type Job = { id: string; opening: string[]; black: Side; white: Side };
 
 type Turn = { move: string; by: Precision; visits: number; winrate: number; ms: number };
 
 export type Result = {
   id: string;
   opening: string[];
-  black: Precision;
-  condition: Condition;
+  black: Side;
+  white: Side;
   winner: Player;
-  winnerPrecision: Precision;
   reason: 'connection' | 'resign' | 'no-moves';
   turns: Turn[];
   seconds: number;
@@ -33,6 +35,11 @@ const RESIGN_WINRATE = 0.02;
 const RESIGN_TURNS = 3;
 
 const { driver, log } = bridge<Job, Result>();
+
+const describe = (side: Side) => `${side.precision}@${
+  side.condition.kind === 'policy' ? 'policy'
+  : side.condition.kind === 'visits' ? `${side.condition.visits}v`
+  : `${side.condition.seconds}s`}`;
 
 /** The move the raw net would play: its best policy over the empty cells. */
 function policyMove(policy: number[], moves: string[], size: number): string {
@@ -47,8 +54,7 @@ function policyMove(policy: number[], moves: string[], size: number): string {
 }
 
 async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): Promise<Result> {
-  const white = job.black === 'fp16' ? 'fp32' : 'fp16';
-  const byColour: Record<Player, Precision> = { B: job.black, W: white };
+  const sides: Record<Player, Side> = { B: job.black, W: job.white };
 
   const moves = [...job.opening];
   const turns: Turn[] = [];
@@ -57,9 +63,9 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
 
   for (;;) {
     const player: Player = moves.length % 2 ? 'W' : 'B';
-    const precision = byColour[player];
+    const { precision, condition } = sides[player];
     const at = performance.now();
-    const reply = await engines[precision].analyse(moves, job.condition);
+    const reply = await engines[precision].analyse(moves, condition);
     const ms = performance.now() - at;
 
     if (reply.error) throw new Error(`${precision}: ${reply.error}`);
@@ -67,15 +73,14 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
     // The engine ends a game on a bridge to the edge, not only on a solid
     // chain, so its own silence is the authority on when a game is over. Only
     // the side that just moved can have completed a connection.
-    const chosen = job.condition.kind === 'policy'
+    const chosen = condition.kind === 'policy'
       ? (reply.policy ? policyMove(reply.policy, moves, SIZE) : null)
       : (reply.moveInfos?.length
           ? reply.moveInfos.reduce((a, b) => (a.order <= b.order ? a : b)).move
           : null);
     if (!chosen) {
-      const winner = other(player);
       return {
-        ...job, winner, winnerPrecision: byColour[winner], reason: 'no-moves',
+        ...job, winner: other(player), reason: 'no-moves',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -83,9 +88,8 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
     const winrate = reply.rootInfo?.winrate ?? 0.5;
     losing[player] = winrate < RESIGN_WINRATE ? losing[player] + 1 : 0;
     if (losing[player] >= RESIGN_TURNS) {
-      const winner = other(player);
       return {
-        ...job, winner, winnerPrecision: byColour[winner], reason: 'resign',
+        ...job, winner: other(player), reason: 'resign',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -95,7 +99,7 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
 
     if (connected(stones(moves, SIZE), SIZE, player)) {
       return {
-        ...job, winner: player, winnerPrecision: precision, reason: 'connection',
+        ...job, winner: player, reason: 'connection',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -116,10 +120,11 @@ async function main() {
     const job = await driver.nextJob();
     if (!job) break;
     const result = await playGame(job, engines);
-    const detail = result.condition.kind === 'policy' ? 'policy'
-      : `${Math.round(result.turns.reduce((n, t) => n + t.visits, 0) / result.turns.length)} visits/move`;
-    log(`${job.id}: ${result.winnerPrecision} wins as ${result.winner} in ${result.turns.length} ` +
-        `(${result.reason}, ${result.seconds.toFixed(0)}s, ${detail})`);
+    const visits = Math.round(
+      result.turns.reduce((n, t) => n + t.visits, 0) / Math.max(1, result.turns.length));
+    const winner = result.winner === 'B' ? result.black : result.white;
+    log(`${job.id}: ${describe(winner)} wins as ${result.winner} ` +
+        `in ${result.turns.length} (${result.reason}, ${result.seconds.toFixed(0)}s, ${visits} visits/move)`);
     await driver.report(result);
   }
   log('done');
