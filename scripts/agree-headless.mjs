@@ -19,6 +19,7 @@ const flag = (name, fallback) => {
 
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const size = Number(flag('size', '11'));
+const threads = Number(flag('threads', '16'));
 const every = Number(flag('every', '3'));
 const out = flag('out');
 
@@ -62,7 +63,7 @@ page.on('pageerror', (error) => console.error('[page]', error.message));
 await page.exposeFunction('nextJob', () => queue.shift() ?? null);
 await page.exposeFunction('note', (line) => void console.error(line));
 await page.exposeFunction('report', (result) => appendFileSync(out, JSON.stringify(result) + '\n'));
-await page.goto(`${BASE}/agree.html?size=${size}`);
+await page.goto(`${BASE}/agree.html?size=${size}&threads=${threads}`);
 await page.waitForFunction(
   () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
   null, { timeout: 0 });

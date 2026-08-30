@@ -45,6 +45,18 @@ console.log(`${name(a)} pair score ${(score * 100).toFixed(1)}% +- ${(stderr * 5
 console.log(`${name(a)} elo ${elo(score)} ` +
   `[${elo(score - 1.96 * stderr / 2)}, ${elo(score + 1.96 * stderr / 2)}] (95%)`);
 
+// The normal approximation is generous when few pairs are decisive, and most
+// pairs are ties by construction: both sides win the same opening from the same
+// colour. A sign test over the decisive pairs is the honest one.
+const decisive = differentials.filter((d) => d !== 0);
+const wins = decisive.filter((d) => d > 0).length;
+const choose = (n, k) => (k < 0 || k > n ? 0 : Array.from({ length: k }, (_, i) => (n - i) / (i + 1))
+  .reduce((a, b) => a * b, 1));
+const tail = (n, k) => Array.from({ length: k + 1 }, (_, i) => choose(n, i)).reduce((a, b) => a + b, 0);
+const smaller = Math.min(wins, decisive.length - wins);
+const p = decisive.length ? Math.min(1, 2 * tail(decisive.length, smaller) / 2 ** decisive.length) : 1;
+console.log(`sign test: ${wins} of ${decisive.length} decisive pairs to ${name(a)}, p = ${p.toFixed(3)}`);
+
 // Speed per side, which is the ratio the comparison turns on, measured under
 // the match's own conditions rather than on a bench.
 const speed = new Map();

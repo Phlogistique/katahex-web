@@ -23,12 +23,16 @@ export type Result = {
   black: Side;
   white: Side;
   winner: Player;
+  /** Recorded because it sets the batch size, and so what half precision is worth. */
+  threads: number;
   reason: 'connection' | 'resign' | 'no-moves';
   turns: Turn[];
   seconds: number;
 };
 
-const SIZE = Number(new URLSearchParams(location.search).get('size') ?? 11);
+const params = new URLSearchParams(location.search);
+const SIZE = Number(params.get('size') ?? 11);
+const THREADS = Number(params.get('threads') ?? 16);
 
 /** A side that thinks it is this far behind, for this many of its own turns, gives up. */
 const RESIGN_WINRATE = 0.02;
@@ -80,7 +84,7 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
           : null);
     if (!chosen) {
       return {
-        ...job, winner: other(player), reason: 'no-moves',
+        ...job, winner: other(player), threads: THREADS, reason: 'no-moves',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -89,7 +93,7 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
     losing[player] = winrate < RESIGN_WINRATE ? losing[player] + 1 : 0;
     if (losing[player] >= RESIGN_TURNS) {
       return {
-        ...job, winner: other(player), reason: 'resign',
+        ...job, winner: other(player), threads: THREADS, reason: 'resign',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -99,7 +103,7 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
 
     if (connected(stones(moves, SIZE), SIZE, player)) {
       return {
-        ...job, winner: player, reason: 'connection',
+        ...job, winner: player, threads: THREADS, reason: 'connection',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -109,8 +113,8 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
 
 async function main() {
   const engines: Record<Precision, AnalysisEngine> = {
-    fp16: new AnalysisEngine('fp16', SIZE, log),
-    fp32: new AnalysisEngine('fp32', SIZE, log),
+    fp16: new AnalysisEngine('fp16', SIZE, log, THREADS),
+    fp32: new AnalysisEngine('fp32', SIZE, log, THREADS),
   };
   log(`loading both engines at ${SIZE}x${SIZE}`);
   await Promise.all([engines.fp16.ready(), engines.fp32.ready()]);

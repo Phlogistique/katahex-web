@@ -35,6 +35,7 @@ const flag = (name, fallback) => {
 
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const size = Number(flag('size', '11'));
+const threads = Number(flag('threads', '16'));
 const repeats = Number(flag('repeats', '1'));
 const out = flag('out');
 const openings = JSON.parse(readFileSync(flag('openings'), 'utf8'));
@@ -85,7 +86,7 @@ await page.exposeFunction('report', (result) => {
   played++;
 });
 
-await page.goto(`${BASE}/match.html?size=${size}`);
+await page.goto(`${BASE}/match.html?size=${size}&threads=${threads}`);
 await page.waitForFunction(
   () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
   null, { timeout: 0 });

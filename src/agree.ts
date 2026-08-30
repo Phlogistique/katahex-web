@@ -13,7 +13,9 @@ export type Job = { id: string; moves: string[]; condition: Condition };
 type Answer = { move: string; winrate: number; visits: number; ms: number };
 export type Result = { id: string; moves: string[]; fp16: Answer; fp32: Answer; agreed: boolean };
 
-const SIZE = Number(new URLSearchParams(location.search).get('size') ?? 11);
+const params = new URLSearchParams(location.search);
+const SIZE = Number(params.get('size') ?? 11);
+const THREADS = Number(params.get('threads') ?? 16);
 const { driver, log } = bridge<Job, Result>();
 
 async function ask(engine: AnalysisEngine, job: Job): Promise<Answer> {
@@ -32,8 +34,8 @@ async function ask(engine: AnalysisEngine, job: Job): Promise<Answer> {
 
 async function main() {
   const engines: Record<Precision, AnalysisEngine> = {
-    fp16: new AnalysisEngine('fp16', SIZE, log),
-    fp32: new AnalysisEngine('fp32', SIZE, log),
+    fp16: new AnalysisEngine('fp16', SIZE, log, THREADS),
+    fp32: new AnalysisEngine('fp32', SIZE, log, THREADS),
   };
   await Promise.all([engines.fp16.ready(), engines.fp32.ready()]);
   log('both engines ready');

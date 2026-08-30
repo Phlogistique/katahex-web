@@ -16,11 +16,13 @@ export type Result = {
   replies: Reply[];
 };
 
-const SIZE = Number(new URLSearchParams(location.search).get('size') ?? 11);
+const params = new URLSearchParams(location.search);
+const SIZE = Number(params.get('size') ?? 11);
+const THREADS = Number(params.get('threads') ?? 16);
 const { driver, log } = bridge<Job, Result>();
 
 async function main() {
-  const engine = new AnalysisEngine('fp32', SIZE, log);
+  const engine = new AnalysisEngine('fp32', SIZE, log, THREADS);
   log(`evaluating positions at ${SIZE}x${SIZE}`);
   await engine.ready();
 

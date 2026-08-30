@@ -20,6 +20,7 @@ const flag = (name, fallback) => {
 
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const size = Number(flag('size', '11'));
+const threads = Number(flag('threads', '16'));
 const visits = Number(flag('visits', '1000'));
 const keep = Number(flag('keep', '20'));
 const sweepPath = flag('sweep');
@@ -28,13 +29,19 @@ const out = flag('out');
 const moveName = (index) => String.fromCharCode(97 + (index % size)) + (Math.floor(index / size) + 1);
 
 // A 180 degree rotation of a hex board is the same game, so a first move and its
-// opposite are one opening.
+// opposite are one opening. `--moves` rates only the ones named, which is enough
+// to see the shape of the distribution on a board too big to sweep whole.
+const named = flag('moves', '');
 const distinct = [];
-const seen = new Set();
-for (let i = 0; i < size * size; i++) {
-  if (seen.has(i)) continue;
-  seen.add(size * size - 1 - i);
-  distinct.push(moveName(i));
+if (named) {
+  distinct.push(...named.split(','));
+} else {
+  const seen = new Set();
+  for (let i = 0; i < size * size; i++) {
+    if (seen.has(i)) continue;
+    seen.add(size * size - 1 - i);
+    distinct.push(moveName(i));
+  }
 }
 
 mkdirSync(dirname(sweepPath), { recursive: true });
@@ -63,7 +70,7 @@ if (queue.length) {
     appendFileSync(sweepPath, JSON.stringify(row) + '\n');
     rated.push(row);
   });
-  await page.goto(`${BASE}/positions.html?size=${size}`);
+  await page.goto(`${BASE}/positions.html?size=${size}&threads=${threads}`);
   await page.waitForFunction(
     () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
     null, { timeout: 0 });

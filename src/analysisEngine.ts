@@ -33,6 +33,11 @@ export class AnalysisEngine {
     readonly precision: Precision,
     private size: number,
     private onLog: (line: string) => void = () => {},
+    // Named rather than left to the worker's default: thread count sets the
+    // batch size the search produces, and half precision is worth much more at
+    // a small batch than a large one, so the two arms of a match have to agree
+    // on it and a result has to record it.
+    readonly searchThreads = 16,
   ) {
     this.worker = new Worker(new URL('./engineWorker.ts', import.meta.url), { type: 'module' });
     let ready!: () => void;
@@ -52,6 +57,7 @@ export class AnalysisEngine {
 
     const start: ToEngine = {
       kind: 'start', boardSize: size, half: precision === 'fp16',
+      searchThreads: this.searchThreads,
       enginePath: '/katahex.js', modelPath: '/hex27x3.bin.gz',
     };
     this.worker.postMessage(start);
