@@ -228,27 +228,36 @@ trusting the name.
 
 ### Search speed, 11x11 on the Iris Xe laptop
 
-Full searches from five different openings, cache cleared before each, two
-analysis threads of eight search threads:
+Threads are the lever, as they are natively: they are what fills the net's
+batches, so at 8 the page searches at around 55-65 visits/s and at 16 it reaches
+85-88. Thirty-two is no faster than sixteen and pays for twice the workers, so
+sixteen is the default. Native on the same laptop does 83 at 16 and 105 at 32, so
+the page is at par where it has been measured and does not follow native's last
+step up.
 
-| | search threads | visits/s |
-| --- | --- | --- |
-| page, fp16 | 8 | 65 |
-| page, fp32 | 8 | 41 |
-| native OpenCL, same laptop | 4 / 16 / 32 | 37.5 / 83 / 105 |
+Those numbers are one significant digit. **Measuring anything here is harder than
+it looks, and every figure in this section survived only because it was measured
+in an order that runs against its own bias.** Two traps, both hit:
 
-Compare at equal threads, or not at all: threads set the batch size and this GPU is
-latency-bound, which is the whole of the table above. Native has not been measured at
-8, but it is around 60 between its 4 and its 16, so the page is at par there -- as the
-net benchmark says it should be, since the net is at par per evaluation.
+- **A closed browser is not a dead browser.** Playwright's `browser.close()`
+  leaves the whole process tree alive when the page holds a wasm engine: it has
+  tens of worker threads and a WebGPU device, and the renderer never tears down.
+  One left over from a finished run was still holding 817 MB and 13% of a core
+  seven minutes later. Runs after it are then racing a whole live engine, so a
+  session decays as they pile up: the same 8-thread config gave 56-65 visits/s
+  early in one session and 22-25 twenty minutes later. That decay has the shape
+  of whatever you happen to be sweeping. Stop the engine before closing, kill
+  anything whose `comm` is `chrome-headless` between runs, and refuse to start a
+  run while one is alive.
+- **Sweep in a reversed order** -- 8, 16, 32, 32, 16, 8 -- so drift cancels
+  instead of being read as an effect. This is what caught the leak: the same
+  thread count measured three times slower at the end of a session than at the
+  start.
 
-What is untested is whether the page follows native's curve on up to 105. Every wasm
-thread is a worker of its own, so the thread counts native runs at are not obviously
-free here. One run at 16 threads gave 45-65 visits/s, but another process was on the
-GPU throughout, so it settles nothing.
-
-Half precision is worth 1.6x, more than it is worth at any single batch size, because
-a search is a mixture of batch sizes and the small ones gain the most.
+The fp16-against-fp32 ratio is deliberately not quoted here. It was measured at
+1.6x, in a block of fp16 runs followed by a block of fp32 runs, which is exactly
+the design the leak defeats. A paired measurement over 189 moves put it at 1.2x
+instead. Precision is worth something, but not what this page claimed.
 
 ## Engine
 

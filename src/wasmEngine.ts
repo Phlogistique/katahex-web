@@ -25,6 +25,12 @@ export type WasmEngineOptions = {
   modelPath?: string;
   /** Half precision: twice the speed, and the error the native engine also has. */
   half?: boolean;
+  /**
+   * Threads searching one position. They are what fills the net's batches, so
+   * this is the biggest lever on speed: 8 threads search at 55 visits/s, 16 at
+   * 87, and 32 no faster than 16. Each one is a worker.
+   */
+  searchThreads?: number;
   onStats?: (stats: EvalStats) => void;
 };
 
@@ -33,6 +39,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
     enginePath = '/katahex.js',
     modelPath = '/hex27x3.bin.gz',
     half = true,
+    searchThreads = 16,
     onStats,
   } = options;
 
@@ -52,7 +59,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
-      send({ kind: 'start', boardSize, half, enginePath, modelPath });
+      send({ kind: 'start', boardSize, half, searchThreads, enginePath, modelPath });
     },
 
     query(json) {

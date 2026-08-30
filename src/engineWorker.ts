@@ -13,7 +13,8 @@ import { serveEvals, type EvalStats } from './netRunner';
 import { KataGoWebGpuModel } from './webgpuModel';
 
 export type ToEngine =
-  | { kind: 'start'; boardSize: number; half: boolean; enginePath: string; modelPath: string }
+  | { kind: 'start'; boardSize: number; half: boolean; searchThreads: number;
+      enginePath: string; modelPath: string }
   | { kind: 'query'; json: string };
 
 export type FromEngine =
@@ -22,22 +23,16 @@ export type FromEngine =
   | { kind: 'stats'; stats: EvalStats }
   | { kind: 'error'; message: string };
 
-/**
- * How much of the engine runs at once. Every thread is a worker of its own, and
- * they are what fills the net's batches: a lone evaluation costs 39ms where a
- * batch of 16 costs 9ms each. Two analysis threads let the evaluation graph fill
- * in while a position is searched.
- */
+/** Lets the evaluation graph fill in while a position is searched. */
 const NUM_ANALYSIS_THREADS = 2;
-const SEARCH_THREADS_PER_ANALYSIS_THREAD = 8;
 
 const post = (message: FromEngine) => self.postMessage(message);
 
 /** Mostly the config the Android app writes, minus what is about a phone. */
-const config = (boardSize: number) => `
+const config = (boardSize: number, searchThreads: number) => `
 numAnalysisThreads = ${NUM_ANALYSIS_THREADS}
-numSearchThreadsPerAnalysisThread = ${SEARCH_THREADS_PER_ANALYSIS_THREAD}
-nnMaxBatchSize = ${NUM_ANALYSIS_THREADS * SEARCH_THREADS_PER_ANALYSIS_THREAD}
+numSearchThreadsPerAnalysisThread = ${searchThreads}
+nnMaxBatchSize = ${NUM_ANALYSIS_THREADS * searchThreads}
 maxBoardXSizeForNNBuffer = ${boardSize}
 maxBoardYSizeForNNBuffer = ${boardSize}
 nnCacheSizePowerOfTwo = 20
@@ -67,7 +62,7 @@ let engine: EmscriptenModule | null = null;
 const queued: string[] = [];
 
 async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<void> {
-  const { boardSize, half, enginePath, modelPath } = options;
+  const { boardSize, half, searchThreads, enginePath, modelPath } = options;
 
   const gpu = await navigator.gpu?.requestAdapter();
   const device = await gpu?.requestDevice({
@@ -97,7 +92,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   });
 
   module.FS.writeFile('/model.bin', raw);
-  module.FS.writeFile('/analysis.cfg', config(boardSize));
+  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads));
 
   const model = new KataGoWebGpuModel(device, parseKataGoModelV8(raw), boardSize, half);
 
