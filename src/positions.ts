@@ -23,6 +23,7 @@ const { driver, log } = bridge<Job, Result>();
 
 async function main() {
   const engine = new AnalysisEngine('fp32', SIZE, log, THREADS);
+  (globalThis as { stopEngines?: () => void }).stopEngines = () => engine.stop();
   log(`evaluating positions at ${SIZE}x${SIZE}`);
   await engine.ready();
 

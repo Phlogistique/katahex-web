@@ -8,7 +8,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { chromium } from 'playwright';
+import { close, finished, open } from './browser.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -55,16 +55,14 @@ const queue = jobs.filter((job) => !done.has(job.id));
 console.error(`${queue.length} positions to ask, ${done.size} already recorded`);
 if (!queue.length) process.exit(0);
 
-const browser = await chromium.launch({
-  args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan'],
+const { browser, page } = await open(`${BASE}/agree.html?size=${size}&threads=${threads}`, {
+  onError: (message) => console.error('[page]', message),
+  expose: {
+    nextJob: () => queue.shift() ?? null,
+    note: (line) => void console.error(line),
+    report: (result) => appendFileSync(out, JSON.stringify(result) + '\n'),
+  },
 });
-const page = await browser.newPage();
-page.on('pageerror', (error) => console.error('[page]', error.message));
-await page.exposeFunction('nextJob', () => queue.shift() ?? null);
-await page.exposeFunction('note', (line) => void console.error(line));
-await page.exposeFunction('report', (result) => appendFileSync(out, JSON.stringify(result) + '\n'));
-await page.goto(`${BASE}/agree.html?size=${size}&threads=${threads}`);
-await page.waitForFunction(
-  () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
-  null, { timeout: 0 });
-await browser.close();
+
+await finished(page);
+await close(browser, page);

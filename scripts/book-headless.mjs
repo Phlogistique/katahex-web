@@ -17,7 +17,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { chromium } from 'playwright';
+import { close, finished, open } from './browser.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -79,22 +79,20 @@ const nextJob = () => {
   return secondPass.shift() ?? null;
 };
 
-const browser = await chromium.launch({
-  args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan'],
+const { browser, page } = await open(`${BASE}/positions.html?size=${size}&threads=${threads}`, {
+  onError: (message) => console.error('[page]', message),
+  expose: {
+    nextJob,
+    note: (line) => void console.error(line),
+    report: (result) => {
+      appendFileSync(cachePath, JSON.stringify(result) + '\n');
+      cache.set(result.id, result);
+    },
+  },
 });
-const page = await browser.newPage();
-page.on('pageerror', (error) => console.error('[page]', error.message));
-await page.exposeFunction('nextJob', nextJob);
-await page.exposeFunction('note', (line) => void console.error(line));
-await page.exposeFunction('report', (result) => {
-  appendFileSync(cachePath, JSON.stringify(result) + '\n');
-  cache.set(result.id, result);
-});
-await page.goto(`${BASE}/positions.html?size=${size}&threads=${threads}`);
-await page.waitForFunction(
-  () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
-  null, { timeout: 0 });
-await browser.close();
+
+await finished(page);
+await close(browser, page);
 
 // Black is to move in a two move position, so its winrate is reported directly.
 const book = [...cache.values()]

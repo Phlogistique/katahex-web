@@ -9,7 +9,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { chromium } from 'playwright';
+import { close, finished, open } from './browser.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -53,28 +53,26 @@ const queue = distinct.filter((move) => !rated.some((row) => row.move === move))
 console.error(`${queue.length} first moves to rate, ${rated.length} already done`);
 
 if (queue.length) {
-  const browser = await chromium.launch({
-    args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan'],
+  const { browser, page } = await open(`${BASE}/positions.html?size=${size}&threads=${threads}`, {
+    onError: (message) => console.error('[page]', message),
+    expose: {
+      nextJob: () => {
+        const job = queue.shift();
+        return job ? { id: job.move, moves: [job.move], visits: job.visits } : null;
+      },
+      note: (line) => void console.error(line),
+      report: (position) => {
+        // The side to move after black's first move is white, so black's share
+        // is what is left over.
+        const row = { move: position.id, blackWinrate: 1 - position.winrate, visits: position.visits };
+        appendFileSync(sweepPath, JSON.stringify(row) + '\n');
+        rated.push(row);
+      },
+    },
   });
-  const page = await browser.newPage();
-  page.on('pageerror', (error) => console.error('[page]', error.message));
-  await page.exposeFunction('nextJob', () => {
-    const job = queue.shift();
-    return job ? { id: job.move, moves: [job.move], visits: job.visits } : null;
-  });
-  await page.exposeFunction('note', (line) => void console.error(line));
-  await page.exposeFunction('report', (position) => {
-    // The side to move after black's first move is white, so black's share is
-    // what is left over.
-    const row = { move: position.id, blackWinrate: 1 - position.winrate, visits: position.visits };
-    appendFileSync(sweepPath, JSON.stringify(row) + '\n');
-    rated.push(row);
-  });
-  await page.goto(`${BASE}/positions.html?size=${size}&threads=${threads}`);
-  await page.waitForFunction(
-    () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
-    null, { timeout: 0 });
-  await browser.close();
+
+  await finished(page);
+  await close(browser, page);
 }
 
 const balanced = [...rated]

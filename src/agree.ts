@@ -37,6 +37,8 @@ async function main() {
     fp16: new AnalysisEngine('fp16', SIZE, log, THREADS),
     fp32: new AnalysisEngine('fp32', SIZE, log, THREADS),
   };
+  (globalThis as { stopEngines?: () => void }).stopEngines =
+    () => { engines.fp16.stop(); engines.fp32.stop(); };
   await Promise.all([engines.fp16.ready(), engines.fp32.ready()]);
   log('both engines ready');
 

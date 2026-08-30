@@ -66,6 +66,13 @@ export class AnalysisEngine {
   /** Resolves when the engine has logged that it is up; queries before it are queued anyway. */
   ready(): Promise<void> { return this.started; }
 
+  /**
+   * Drops the engine and the net with it. Closing the browser on top of live
+   * workers leaves the whole process tree behind, still holding a WebGPU device,
+   * for the next run to measure itself against.
+   */
+  stop(): void { this.worker.terminate(); }
+
   analyse(
     moves: string[],
     condition: Condition,
