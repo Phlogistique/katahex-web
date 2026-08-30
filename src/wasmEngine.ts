@@ -32,6 +32,11 @@ export type WasmEngineOptions = {
    * the same net, and 64 threads between them is slower than 32.
    */
   searchThreads?: number;
+  /**
+   * How long the net's serving thread lets a partial batch keep filling,
+   * in microseconds. A batch's stragglers are a few milliseconds behind it.
+   */
+  batchWaitMicros?: number;
   onStats?: (stats: EvalStats) => void;
 };
 
@@ -41,6 +46,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
     modelPath = '/hex27x3.bin.gz',
     half = true,
     searchThreads = 16,
+    batchWaitMicros = 0,
     onStats,
   } = options;
 
@@ -60,7 +66,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
-      send({ kind: 'start', boardSize, half, searchThreads, enginePath, modelPath });
+      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, enginePath, modelPath });
     },
 
     query(json) {

@@ -14,7 +14,7 @@ import { KataGoWebGpuModel } from './webgpuModel';
 
 export type ToEngine =
   | { kind: 'start'; boardSize: number; half: boolean; searchThreads: number;
-      enginePath: string; modelPath: string }
+      batchWaitMicros: number; enginePath: string; modelPath: string }
   | { kind: 'query'; json: string };
 
 export type FromEngine =
@@ -29,10 +29,11 @@ const NUM_ANALYSIS_THREADS = 2;
 const post = (message: FromEngine) => self.postMessage(message);
 
 /** Mostly the config the Android app writes, minus what is about a phone. */
-const config = (boardSize: number, searchThreads: number) => `
+const config = (boardSize: number, searchThreads: number, batchWaitMicros: number) => `
 numAnalysisThreads = ${NUM_ANALYSIS_THREADS}
 numSearchThreadsPerAnalysisThread = ${searchThreads}
 nnMaxBatchSize = ${NUM_ANALYSIS_THREADS * searchThreads}
+nnServeBatchWaitMicros = ${batchWaitMicros}
 maxBoardXSizeForNNBuffer = ${boardSize}
 maxBoardYSizeForNNBuffer = ${boardSize}
 nnCacheSizePowerOfTwo = 20
@@ -62,7 +63,7 @@ let engine: EmscriptenModule | null = null;
 const queued: string[] = [];
 
 async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<void> {
-  const { boardSize, half, searchThreads, enginePath, modelPath } = options;
+  const { boardSize, half, searchThreads, batchWaitMicros, enginePath, modelPath } = options;
 
   const gpu = await navigator.gpu?.requestAdapter();
   const device = await gpu?.requestDevice({
@@ -92,7 +93,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   });
 
   module.FS.writeFile('/model.bin', raw);
-  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads));
+  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros));
 
   const model = new KataGoWebGpuModel(device, parseKataGoModelV8(raw), boardSize, half);
 
