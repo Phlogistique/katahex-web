@@ -61,8 +61,13 @@ console.log(`sign test: ${wins} of ${decisive.length} decisive pairs to ${name(a
 // the match's own conditions rather than on a bench.
 const speed = new Map();
 for (const game of games) {
+  const aIsBlack = game.id.endsWith('/a');
   game.turns.forEach((turn, ply) => {
-    const key = name((game.opening.length + ply) % 2 ? game.white : game.black);
+    const black = (game.opening.length + ply) % 2 === 0;
+    // By seat, not by name: in a control both seats have the same name, and the
+    // whole point is to tell the two engine instances apart.
+    const seat = black === aIsBlack ? 'a' : 'b';
+    const key = `${seat} ${name(black ? game.black : game.white)}`;
     const total = speed.get(key) ?? { visits: 0, ms: 0, moves: 0 };
     total.visits += turn.visits;
     total.ms += turn.ms;

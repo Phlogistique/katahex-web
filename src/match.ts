@@ -15,6 +15,9 @@ export type Side = { precision: Precision; condition: Condition };
 
 export type Job = { id: string; opening: string[]; black: Side; white: Side };
 
+/** The two players of a match, told apart by which engine instance they are. */
+type Seat = 'a' | 'b';
+
 type Turn = { move: string; by: Precision; visits: number; winrate: number; ms: number };
 
 export type Result = {
@@ -59,8 +62,21 @@ function policyMove(policy: number[], moves: string[], size: number): string {
   return moveName(bestAt, size);
 }
 
-async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): Promise<Result> {
+/**
+ * Which engine plays which colour. The two players are seats rather than
+ * precisions: pairing swaps the colours, so it cancels the first-player
+ * advantage, but it never swaps engine identity, and one seat is always built
+ * first. Keeping the seats apart is what lets a seat play itself, which is the
+ * only way to find out what being built first is worth.
+ */
+const seatOf = (job: Job): Record<Player, Seat> =>
+  job.id.endsWith('/a') ? { B: 'a', W: 'b' } : { B: 'b', W: 'a' };
+
+async function playGame(
+  job: Job, engines: Record<Seat, AnalysisEngine>,
+): Promise<Result> {
   const sides: Record<Player, Side> = { B: job.black, W: job.white };
+  const seats = seatOf(job);
 
   const moves = [...job.opening];
   const turns: Turn[] = [];
@@ -71,7 +87,7 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
     const player: Player = moves.length % 2 ? 'W' : 'B';
     const { precision, condition } = sides[player];
     const at = performance.now();
-    const reply = await engines[precision].analyse(moves, condition);
+    const reply = await engines[seats[player]].analyse(moves, condition);
     const ms = performance.now() - at;
 
     if (reply.error) throw new Error(`${precision}: ${reply.error}`);
@@ -114,19 +130,30 @@ async function playGame(job: Job, engines: Record<Precision, AnalysisEngine>): P
 }
 
 async function main() {
-  const engines: Record<Precision, AnalysisEngine> = {
-    fp16: new AnalysisEngine('fp16', SIZE, log, THREADS, BATCH_WAIT),
-    fp32: new AnalysisEngine('fp32', SIZE, log, THREADS, BATCH_WAIT),
-  };
-  log(`loading both engines at ${SIZE}x${SIZE}`);
-  (globalThis as { stopEngines?: () => void }).stopEngines =
-    () => { engines.fp16.stop(); engines.fp32.stop(); };
-  await Promise.all([engines.fp16.ready(), engines.fp32.ready()]);
-  log('both engines ready');
+  let engines: Record<Seat, AnalysisEngine> | null = null;
 
   for (;;) {
     const job = await driver.nextJob();
     if (!job) break;
+
+    // The seats' specifications come from the first job rather than the url, so
+    // the driver stays the only place a match is described.
+    if (!engines) {
+      const seats = seatOf(job);
+      const spec: Record<Seat, Side> =
+        seats.B === 'a' ? { a: job.black, b: job.white } : { a: job.white, b: job.black };
+      engines = {
+        a: new AnalysisEngine(spec.a.precision, SIZE, log, THREADS, BATCH_WAIT),
+        b: new AnalysisEngine(spec.b.precision, SIZE, log, THREADS, BATCH_WAIT),
+      };
+      const both = engines;
+      (globalThis as { stopEngines?: () => void }).stopEngines =
+        () => { both.a.stop(); both.b.stop(); };
+      log(`seat a ${describe(spec.a)}, seat b ${describe(spec.b)}, loading at ${SIZE}x${SIZE}`);
+      await Promise.all([engines.a.ready(), engines.b.ready()]);
+      log('both engines ready');
+    }
+
     const result = await playGame(job, engines);
     const visits = Math.round(
       result.turns.reduce((n, t) => n + t.visits, 0) / Math.max(1, result.turns.length));
