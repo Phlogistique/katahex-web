@@ -228,12 +228,26 @@ trusting the name.
 
 ### Search speed, 11x11 on the Iris Xe laptop
 
-Threads are the lever, as they are natively: they are what fills the net's
-batches, so at 8 the page searches at around 55-65 visits/s and at 16 it reaches
-85-88. Thirty-two is no faster than sixteen and pays for twice the workers, so
-sixteen is the default. Native on the same laptop does 83 at 16 and 105 at 32, so
-the page is at par where it has been measured and does not follow native's last
-step up.
+Sweeping 8, 16, 32, 32, 16, 8 with nothing else on the machine, three openings
+each, cache cleared, mean of a thread count's two blocks:
+
+| search threads | page, fp16 | native OpenCL |
+| --- | --- | --- |
+| 8 | 55 | ~60 (between its 4 and its 16) |
+| 16 | 65 | 83 |
+| 32 | 66 | 105 |
+
+Sixteen is the default: it is worth 18% over eight, and thirty-two buys nothing
+for twice the workers.
+
+The shape is the result. Threads are what fills the net's batches, and natively
+that keeps paying all the way to 32 -- but the page stops gaining after 16 and
+sits at 66 whatever it is given. It is not the net that runs out: that
+benchmarks at 120 evaluations a second, well above the 66 the search asks for.
+So what the page is short of is not GPU and not batch size, it is the search
+itself -- the tree descent, the backup and the futex traffic between the
+workers, all in WebAssembly. That is also why the gap to native widens with
+threads rather than closing.
 
 Those numbers are one significant digit. **Measuring anything here is harder than
 it looks, and every figure in this section survived only because it was measured

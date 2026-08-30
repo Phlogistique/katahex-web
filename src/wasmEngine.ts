@@ -26,9 +26,9 @@ export type WasmEngineOptions = {
   /** Half precision: twice the speed, and the error the native engine also has. */
   half?: boolean;
   /**
-   * Threads searching one position. They are what fills the net's batches, so
-   * this is the biggest lever on speed: 8 threads search at 55 visits/s, 16 at
-   * 87, and 32 no faster than 16. Each one is a worker.
+   * Threads searching one position. They are what fills the net's batches: 8
+   * threads search at 55 visits/s, 16 at 65, and 32 no faster than 16. Each one
+   * is a worker.
    */
   searchThreads?: number;
   onStats?: (stats: EvalStats) => void;
