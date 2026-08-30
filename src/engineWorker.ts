@@ -14,7 +14,7 @@ import { KataGoWebGpuModel } from './webgpuModel';
 
 export type ToEngine =
   | { kind: 'start'; boardSize: number; half: boolean; searchThreads: number;
-      batchWaitMicros: number; serverThreads: number; profile: boolean;
+      batchWaitMicros?: number; serverThreads?: number; profile?: boolean;
       enginePath: string; modelPath: string }
   | { kind: 'query'; json: string };
 
@@ -66,7 +66,10 @@ let engine: EmscriptenModule | null = null;
 const queued: string[] = [];
 
 async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<void> {
-  const { boardSize, half, searchThreads, batchWaitMicros, serverThreads, profile, enginePath, modelPath } = options;
+  // The newer knobs default here: this is a postMessage boundary, and a
+  // driver built against an older shape must keep working.
+  const { boardSize, half, searchThreads, batchWaitMicros = 3000, serverThreads = 2,
+          profile = false, enginePath, modelPath } = options;
 
   const gpu = await navigator.gpu?.requestAdapter();
   const wanted: GPUFeatureName[] = [];

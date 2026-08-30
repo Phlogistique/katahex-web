@@ -33,9 +33,10 @@ else
   # its pthread workers, so it must keep it where it is served from too.
   ENVFLAGS="-sFORCE_FILESYSTEM=1 -sENVIRONMENT=web,worker -sEXPORT_ES6=1"
   CXXEXTRA=-DKATAHEX_QUERY_QUEUE
-  # Enough workers for 2 x 32 search threads plus the serving and main threads;
-  # a thread past the pool is created lazily through the busiest thread there is.
-  POOL=80
+  # Covers the shipped 2 x 16 search threads plus the serving and main threads;
+  # a thread past the pool is created lazily through the busiest thread there
+  # is, so a bigger experiment should override POOL instead.
+  POOL=${POOL:-40}
   PROXY=-sPROXY_TO_PTHREAD=1
 fi
 
