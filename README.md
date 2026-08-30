@@ -231,18 +231,24 @@ trusting the name.
 Full searches from five different openings, cache cleared before each, two
 analysis threads of eight search threads:
 
-| | visits/s |
-| --- | --- |
-| page, fp16 | 65 |
-| page, fp32 | 41 |
-| native OpenCL, same laptop | 105 |
-| native OpenCL, Pixel 7 | 64 |
+| | search threads | visits/s |
+| --- | --- | --- |
+| page, fp16 | 8 | 65 |
+| page, fp32 | 8 | 41 |
+| native OpenCL, same laptop | 4 / 16 / 32 | 37.5 / 83 / 105 |
 
-So the browser searches at about 60% of native on the same machine, with the board
-and the search themselves running in WebAssembly, and matches a phone running the
-whole thing natively. Half precision is worth 1.6x -- more than it is worth on any
-single batch size, because a search is a mixture of batch sizes and the small ones
-gain the most.
+Compare at equal threads, or not at all: threads set the batch size and this GPU is
+latency-bound, which is the whole of the table above. Native has not been measured at
+8, but it is around 60 between its 4 and its 16, so the page is at par there -- as the
+net benchmark says it should be, since the net is at par per evaluation.
+
+What is untested is whether the page follows native's curve on up to 105. Every wasm
+thread is a worker of its own, so the thread counts native runs at are not obviously
+free here. One run at 16 threads gave 45-65 visits/s, but another process was on the
+GPU throughout, so it settles nothing.
+
+Half precision is worth 1.6x, more than it is worth at any single batch size, because
+a search is a mixture of batch sizes and the small ones gain the most.
 
 ## Engine
 
