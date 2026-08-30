@@ -17,7 +17,7 @@ const log = (s: string) => {
   console.log(s);
 };
 
-const BATCHES = [1, 2, 4, 8, 16, 32, 64];
+const BATCHES = [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128];
 const ITERS = 12;
 const NUM_SPATIAL_FEATURES = 22;
 const NUM_GLOBAL_FEATURES = 19;
@@ -176,7 +176,9 @@ async function run() {
         ? await makeOrtRunner(runtime.includes('wasm') ? 'wasm' : 'webgpu', size, runtime.includes('fp16'))
         : await makeTfRunner(runtime.includes('wasm') ? 'wasm' : 'webgpu', size);
 
-    for (const batchSize of BATCHES) {
+    // Up then down, because the GPU throttles as it heats: a batch's two
+    // readings straddle the drift, so their average mostly cancels it.
+    for (const batchSize of [...BATCHES, ...[...BATCHES].reverse()]) {
       const probe = await runner.evaluate(batchSize); // warm up: compiles every shader
       if (!Number.isFinite(probe)) log(`WARNING: policy[0] is ${probe}`);
 
