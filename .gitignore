@@ -6,3 +6,6 @@ analysis_logs/
 public/hex27x3-*.onnx
 public/ort/
 __pycache__/
+results/
+public/katahex.js
+public/katahex.wasm
