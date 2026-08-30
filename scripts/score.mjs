@@ -68,14 +68,18 @@ for (const game of games) {
     // whole point is to tell the two engine instances apart.
     const seat = black === aIsBlack ? 'a' : 'b';
     const key = `${seat} ${name(black ? game.black : game.white)}`;
-    const total = speed.get(key) ?? { visits: 0, ms: 0, moves: 0 };
+    const total = speed.get(key) ?? { visits: 0, rows: 0, ms: 0, moves: 0 };
     total.visits += turn.visits;
+    total.rows += turn.rows ?? 0;
     total.ms += turn.ms;
     total.moves += 1;
     speed.set(key, total);
   });
 }
-for (const [key, { visits, ms, moves }] of speed) {
-  console.log(`${key}: ${(1000 * visits / ms).toFixed(1)} visits/s, ` +
-    `${Math.round(visits / moves)} visits/move over ${moves} moves`);
+// Evaluations, not visits: a move can spend thousands of visits walking a
+// subtree the nnCache already holds, and those never reach the GPU at all.
+for (const [key, { visits, rows, ms, moves }] of speed) {
+  console.log(`${key}: ${(1000 * rows / ms).toFixed(1)} evals/s, ` +
+    `${Math.round(rows / moves)} evals/move, ${Math.round(visits / moves)} visits/move ` +
+    `(${(visits / Math.max(1, rows)).toFixed(2)} visits/eval) over ${moves} moves`);
 }

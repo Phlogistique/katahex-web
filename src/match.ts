@@ -18,7 +18,7 @@ export type Job = { id: string; opening: string[]; black: Side; white: Side };
 /** The two players of a match, told apart by which engine instance they are. */
 type Seat = 'a' | 'b';
 
-type Turn = { move: string; by: Precision; visits: number; winrate: number; ms: number };
+type Turn = { move: string; by: Precision; visits: number; rows: number; winrate: number; ms: number };
 
 export type Result = {
   id: string;
@@ -86,9 +86,12 @@ async function playGame(
   for (;;) {
     const player: Player = moves.length % 2 ? 'W' : 'B';
     const { precision, condition } = sides[player];
+    const engine = engines[seats[player]];
     const at = performance.now();
-    const reply = await engines[seats[player]].analyse(moves, condition);
+    const rowsBefore = engine.rows;
+    const reply = await engine.analyse(moves, condition);
     const ms = performance.now() - at;
+    const rows = engine.rows - rowsBefore;
 
     if (reply.error) throw new Error(`${precision}: ${reply.error}`);
 
@@ -117,7 +120,7 @@ async function playGame(
     }
 
     moves.push(chosen);
-    turns.push({ move: chosen, by: precision, visits: reply.rootInfo?.visits ?? 0, winrate, ms });
+    turns.push({ move: chosen, by: precision, visits: reply.rootInfo?.visits ?? 0, rows, winrate, ms });
 
     if (connected(stones(moves, SIZE), SIZE, player)) {
       return {

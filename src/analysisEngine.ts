@@ -6,6 +6,7 @@
 // batches, and a lone evaluation costs many times its share of a full one.
 
 import type { FromEngine, ToEngine } from './engineWorker';
+import type { EvalStats } from './netRunner';
 
 export type Precision = 'fp16' | 'fp32';
 
@@ -28,6 +29,7 @@ export class AnalysisEngine {
   private pending = new Map<string, (reply: Reply) => void>();
   private seq = 0;
   private started: Promise<void>;
+  private stats: EvalStats = { evals: 0, rows: 0, nanos: 0 };
 
   constructor(
     readonly precision: Precision,
@@ -53,6 +55,8 @@ export class AnalysisEngine {
         const reply = JSON.parse(data.line) as Reply;
         this.pending.get(reply.id)?.(reply);
         this.pending.delete(reply.id);
+      } else if (data.kind === 'stats') {
+        this.stats = data.stats;
       } else if (data.kind === 'log') {
         if (data.line.includes('ready to begin handling requests')) ready();
       } else if (data.kind === 'error') {
@@ -64,6 +68,7 @@ export class AnalysisEngine {
       kind: 'start', boardSize: size, half: precision === 'fp16',
       searchThreads: this.searchThreads,
       batchWaitMicros: this.batchWaitMicros,
+      profile: false,
       enginePath: '/katahex.js', modelPath: '/hex27x3.bin.gz',
     };
     this.worker.postMessage(start);
@@ -71,6 +76,15 @@ export class AnalysisEngine {
 
   /** Resolves when the engine has logged that it is up; queries before it are queued anyway. */
   ready(): Promise<void> { return this.started; }
+
+  /**
+   * Net evaluations served so far, which is the honest measure of how much work
+   * a search did. Visits are not: a move can take thousands of them walking a
+   * subtree the nnCache already holds, and those never reach the GPU. Two
+   * identical engines on the same clock came out at 220 and 141 visits a move
+   * on that alone.
+   */
+  get rows(): number { return this.stats.rows; }
 
   /**
    * Drops the engine and the net with it. Closing the browser on top of live
