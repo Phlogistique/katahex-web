@@ -26,11 +26,9 @@ import type {
 import type { ParsedKataGoModelV8, ParsedTrunkBlock } from '../vendor/modelV8';
 
 const TILE = 64;
-const TILE_K = 16;
-const PER_THREAD = 4;
 
 const roundUp = (v: number, m: number) => Math.ceil(v / m) * m;
-const padC = (c: number) => roundUp(c, TILE_K);
+const padC = (c: number) => roundUp(c, 16);
 
 // ---------------------------------------------------------------------------
 // fp16 conversion
@@ -62,56 +60,97 @@ function fromHalf(h: number): number {
 // Shaders
 
 /**
- * Tiled matmul, C[m,n] = A[m,k] B[k,n], batched over workgroup z when
- * dispatched with depth > 1 (the Winograd tile positions). m must be a
- * multiple of 64 and k of 16; n only has to be a multiple of 16, at the price
- * of a guarded store (`colGuard`) when it is not a multiple of 64.
+ * How one matmul pipeline is shaped. A workgroup of wgX by wgY threads computes
+ * `wgY * rows` output rows by 64 columns; each thread holds `rows * cols4` vec4
+ * accumulators and stages `tileK` of the reduction at a time.
  */
-function matmulShader(t: string, m: number, n: number, k: number): string {
-  const colGuard = n % TILE !== 0;
-  return `${t === 'f16' ? 'enable f16;\n' : ''}
-const M = ${m}u; const N = ${n}u; const K = ${k}u;
-@group(0) @binding(0) var<storage, read> a : array<${t}>;
-@group(0) @binding(1) var<storage, read> b : array<${t}>;
-@group(0) @binding(2) var<storage, read_write> c : array<${t}>;
-var<workgroup> aTile : array<${t}, ${TILE * TILE_K}>;
-var<workgroup> bTile : array<${t}, ${TILE_K * TILE}>;
+export type MatmulTile = { wgX: number; wgY: number; rows: number; cols4: number; tileK: number };
 
-@compute @workgroup_size(16, 16)
+/** 64 rows x 64 columns per workgroup, 4x4 outputs per thread. */
+const WIDE: Omit<MatmulTile, 'tileK'> = { wgX: 16, wgY: 16, rows: 4, cols4: 1 };
+/** Half the rows, for an m that a 64-row tile would pad heavily. */
+const NARROW: Omit<MatmulTile, 'tileK'> = { wgX: 16, wgY: 8, rows: 4, cols4: 1 };
+
+/**
+ * The pipeline shape for a given matmul. A wider k tile halves the barriers but
+ * needs k to divide by it, which the head layers' 48 and 144 channels do not.
+ */
+export function matmulTile(m: number, n: number, k: number): MatmulTile {
+  return { ...(m % TILE === 0 ? WIDE : NARROW), tileK: k % 32 === 0 ? 32 : 16 };
+}
+
+/**
+ * Tiled matmul, C[m,n] = A[m,k] B[k,n], batched over workgroup z when
+ * dispatched with depth > 1 (the Winograd tile positions). Everything moves in
+ * vec4: four columns of B and four steps of the reduction of A per load, so the
+ * inner loop issues a quarter of the shared-memory reads a scalar one would and
+ * every lane reads a whole 8-byte bank. m must be a multiple of the tile's row
+ * count and k of its k tile; n only has to be a multiple of 16, at the price of
+ * a guarded store (`colGuard`) when it is not a multiple of 64.
+ *
+ * The reduction is emitted fully unrolled so the accumulators stay in registers:
+ * a dynamically indexed array of them spills to scratch memory.
+ */
+export function matmulShader(t: string, m: number, n: number, k: number,
+                             tile: MatmulTile = matmulTile(m, n, k)): string {
+  const { wgX, wgY, rows, cols4, tileK } = tile;
+  const tileM = wgY * rows, threads = wgX * wgY;
+  const nq = wgX * cols4;      // vec4 columns a workgroup covers, TILE / 4
+  const kq = tileK / 4;        // vec4s of the reduction staged per step
+  const n4 = n / 4, k4 = k / 4;
+  const aCount = tileM * kq, bCount = tileK * nq;
+  if (m % tileM || k % tileK || n % 16 || nq * 4 !== TILE ||
+      aCount % threads || bCount % threads) throw new Error(`matmul ${m}x${n}x${k} does not tile`);
+
+  const v4 = `vec4<${t}>`;
+  const list = <T,>(count: number, f: (i: number) => T) => Array.from({ length: count }, (_, i) => f(i));
+  const acc = (i: number, p: number) => `acc${i}_${p}`;
+  const stage = (name: string, count: number, expr: string) =>
+    list(count / threads, (s) => `    { let idx = tid + ${s * threads}u; ${name}[idx] = ${expr}; }`);
+
+  // One reduction step: each thread reads a vec4 of A per row and a vec4 of B
+  // per column group, then fans them out over the four k lanes of the vec4.
+  const step = (q: number) => [
+    '    {',
+    ...list(rows, (i) => `      let av${i} = aTile[aRead + ${i * kq + q}u];`),
+    ...list(4, (c) => list(cols4, (p) =>
+      `      let bv${c}_${p} = bTile[bRead + ${(q * 4 + c) * nq + p}u];`)).flat(),
+    ...list(rows, (i) => list(4, (c) => list(cols4, (p) =>
+      `      ${acc(i, p)} += av${i}.${'xyzw'[c]} * bv${c}_${p};`)).flat()).flat(),
+    '    }',
+  ];
+
+  return `${t === 'f16' ? 'enable f16;\n' : ''}
+@group(0) @binding(0) var<storage, read> a : array<${v4}>;
+@group(0) @binding(1) var<storage, read> b : array<${v4}>;
+@group(0) @binding(2) var<storage, read_write> c : array<${v4}>;
+var<workgroup> aTile : array<${v4}, ${aCount}>;
+var<workgroup> bTile : array<${v4}, ${bCount}>;
+
+@compute @workgroup_size(${wgX}, ${wgY})
 fn main(@builtin(local_invocation_id) lid : vec3<u32>,
         @builtin(workgroup_id) wid : vec3<u32>) {
-  let aOff = wid.z * M * K;
-  let bOff = wid.z * K * N;
-  let cOff = wid.z * M * N;
-  let rowBase = wid.y * ${TILE}u + lid.y * ${PER_THREAD}u;
-  let colBase = wid.x * ${TILE}u + lid.x * ${PER_THREAD}u;
-  let tid = lid.y * 16u + lid.x;
-  var acc : array<array<${t}, ${PER_THREAD}>, ${PER_THREAD}>;
+  let tid = lid.y * ${wgX}u + lid.x;
+  let aOff = wid.z * ${m * k4}u + wid.y * ${tileM * k4}u;
+  let bOff = wid.z * ${k * n4}u + wid.x * ${nq}u;
+  let colq = wid.x * ${nq}u + lid.x * ${cols4}u;
+  let cOff = wid.z * ${m * n4}u + (wid.y * ${tileM}u + lid.y * ${rows}u) * ${n4}u + colq;
+  let aRead = lid.y * ${rows * kq}u;
+  let bRead = lid.x * ${cols4}u;
+  // Explicitly zeroed: this driver does not re-initialize a var per iteration,
+  // and these have to survive the k loop anyway.
+${list(rows, (i) => list(cols4, (p) => `  var ${acc(i, p)} = ${v4}();`).join('')).join('\n')}
 
-  for (var k0 = 0u; k0 < K; k0 += ${TILE_K}u) {
-    for (var i = 0u; i < 4u; i++) {
-      let idx = tid + i * 256u;
-      aTile[idx] = a[aOff + (wid.y * ${TILE}u + idx / ${TILE_K}u) * K + k0 + idx % ${TILE_K}u];
-      bTile[idx] = b[bOff + (k0 + idx / ${TILE}u) * N + wid.x * ${TILE}u + idx % ${TILE}u];
-    }
+  for (var kb = 0u; kb < ${k4}u; kb += ${kq}u) {
+${stage('aTile', aCount, `a[aOff + (idx / ${kq}u) * ${k4}u + kb + idx % ${kq}u]`).join('\n')}
+${stage('bTile', bCount, `b[bOff + (kb * 4u + idx / ${nq}u) * ${n4}u + idx % ${nq}u]`).join('\n')}
     workgroupBarrier();
-    for (var kk = 0u; kk < ${TILE_K}u; kk++) {
-      for (var i = 0u; i < ${PER_THREAD}u; i++) {
-        let av = aTile[(lid.y * ${PER_THREAD}u + i) * ${TILE_K}u + kk];
-        for (var j = 0u; j < ${PER_THREAD}u; j++) {
-          acc[i][j] += av * bTile[kk * ${TILE}u + lid.x * ${PER_THREAD}u + j];
-        }
-      }
-    }
+${list(kq, step).flat().join('\n')}
     workgroupBarrier();
   }
-  for (var i = 0u; i < ${PER_THREAD}u; i++) {
-    for (var j = 0u; j < ${PER_THREAD}u; j++) {
-      ${colGuard ? 'if (colBase + j < N) {' : ''}
-      c[cOff + (rowBase + i) * N + colBase + j] = acc[i][j];
-      ${colGuard ? '}' : ''}
-    }
-  }
+${list(rows, (i) => list(cols4, (p) => n % TILE === 0
+    ? `  c[cOff + ${i * n4 + p}u] = ${acc(i, p)};`
+    : `  if (colq + ${p}u < ${n4}u) { c[cOff + ${i * n4 + p}u] = ${acc(i, p)}; }`).join('\n')).join('\n')}
 }`;
 }
 
@@ -592,6 +631,12 @@ export class KataGoWebGpuModel {
       });
     };
 
+    /** Workgroups a [m, n] output needs from the tile its shader picked. */
+    const grid = (m: number, n: number, k: number): [number, number] => {
+      const tile = matmulTile(m, n, k);
+      return [Math.ceil(n / TILE), m / (tile.wgY * tile.rows)];
+    };
+
     /** out = x @ weightName, [x.rowsPad, kpad] x [kpad, npad]. */
     const matmul = (x: Tensor, weightName: string, nOut: number): Tensor => {
       const npad = padC(nOut);
@@ -599,7 +644,7 @@ export class KataGoWebGpuModel {
       run(`matmul ${x.rowsPad}x${npad}x${x.cpad}`,
           this.pipeline(matmulShader(t, x.rowsPad, npad, x.cpad), 'main'),
           [x.buffer, this.weight(weightName), out.buffer],
-          [Math.ceil(npad / TILE), x.rowsPad / TILE, 1]);
+          [...grid(x.rowsPad, npad, x.cpad), 1]);
       return out;
     };
 
@@ -614,7 +659,7 @@ export class KataGoWebGpuModel {
       run(`wino-matmul 36x${wRowsPad}x${npad}x${x.cpad}`,
           this.pipeline(matmulShader(t, wRowsPad, npad, x.cpad), 'main'),
           [v.buffer, this.weight(weightName), mm.buffer],
-          [Math.ceil(npad / TILE), wRowsPad / TILE, 36]);
+          [...grid(wRowsPad, npad, x.cpad), 36]);
       release(v);
       const out = act(npad);
       run(`wino-untransform c${npad}`,
