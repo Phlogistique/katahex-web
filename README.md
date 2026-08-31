@@ -475,9 +475,11 @@ clock is involved.
 | fixed time | fp16 vs fp32, 1s a move | **0 elo [-73, +73]**, 12 of 24 decisive pairs, p = 1.000 |
 | search | fp16 at 400 visits vs fp16 at 100 | +232 elo [178, 298], 59 of 62 decisive pairs, p = 0.000 |
 
-**Half precision is worth nothing measurable at a fixed time budget, and the net
-file is 53 MB instead of 105.** That is the whole result: choose fp16 for the
-download, not for the strength.
+**Half precision is worth nothing measurable at a fixed time budget, and the
+weights take 53 MB of device memory instead of 105.** That is the whole result:
+choose fp16 for the footprint, not for the strength. The download is the same
+either way -- `hex27x3.bin.gz` stores fp32, and `?fp32` only changes what the
+loader casts it to.
 
 The three arms agree. fp16 serves 117 evaluations a move against fp32's 99, so
 1.18x the work, which is 0.24 doublings. The search arm prices a doubling at 143
