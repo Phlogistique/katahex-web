@@ -12,7 +12,33 @@
 // gone before it returns.
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+
+// This GPU throttles from 950 MHz to 400-600 under load, and a sweep taken at
+// 450 against one taken at 900 is not a comparison. Wall clock cannot tell the
+// two apart; the achieved frequency can, so a run samples the band it ran in
+// and a reader can throw out comparisons whose bands do not match.
+const FREQ = '/sys/class/drm/card1/gt_act_freq_mhz';
+
+export function watchFrequency() {
+  const seen = [];
+  const read = () => {
+    try { seen.push(Number(readFileSync(FREQ, 'utf8'))); } catch { /* no counter here */ }
+  };
+  read();
+  const timer = setInterval(read, 250);
+  return () => {
+    clearInterval(timer);
+    seen.sort((a, b) => a - b);
+    return {
+      median: seen.length ? seen[seen.length >> 1] : NaN,
+      band: seen.length
+        ? `${seen[0]}-${seen[seen.length - 1]} MHz, median ${seen[seen.length >> 1]}`
+        : 'frequency unknown',
+    };
+  };
+}
 
 /** Chromium needs the Vulkan flags to expose this laptop's Iris Xe to WebGPU. */
 const ARGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan'];

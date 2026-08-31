@@ -5,30 +5,7 @@
 // Needs a vite server already serving the page (npm run dev), or set BASE.
 // Chromium needs Vulkan flags to expose this laptop's Iris Xe to WebGPU.
 
-import { readFileSync } from 'node:fs';
-
-import { close, finished, open } from './browser.mjs';
-
-// This GPU throttles from 950 MHz to 400-600 under load, and a sweep taken at
-// 450 against one taken at 900 is not a comparison. Wall clock cannot tell the
-// two apart; the achieved frequency can, so every sweep carries the band it ran
-// in and a reader can throw out the ones that do not match.
-const FREQ = '/sys/class/drm/card1/gt_act_freq_mhz';
-
-function watchFrequency() {
-  const seen = [];
-  const read = () => {
-    try { seen.push(Number(readFileSync(FREQ, 'utf8'))); } catch { /* no counter here */ }
-  };
-  read();
-  const timer = setInterval(read, 250);
-  return () => {
-    clearInterval(timer);
-    if (!seen.length) return 'frequency unknown';
-    seen.sort((a, b) => a - b);
-    return `${seen[0]}-${seen[seen.length - 1]} MHz, median ${seen[seen.length >> 1]}`;
-  };
-}
+import { close, finished, open, watchFrequency } from './browser.mjs';
 
 const BASE = process.env.BASE ?? 'http://localhost:5173';
 const args = process.argv.slice(2);
@@ -47,7 +24,7 @@ for (const size of sizes) {
     const frequency = watchFrequency();
     await page.click('#go');
     await finished(page);
-    console.log(`### ${runtime} ${size}x${size} at ${frequency()}`);
+    console.log(`### ${runtime} ${size}x${size} at ${frequency().band}`);
     console.log(await page.textContent('#log'));
   }
 }

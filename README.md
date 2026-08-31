@@ -179,7 +179,7 @@ Zero explicitly.
 
 ### The non-regression gate
 
-A change to `webgpuModel.ts` is checked in two tiers, without playing a
+A change to `webgpuModel.ts` is checked in three tiers, without playing a
 single game. `scripts/make-positions.mjs` built the fixtures once: it replayed
 positions from recorded games (plus constructed ones -- empty boards, lone
 corner stones, stones packed into the board edge the Winograd tiles pad, a
@@ -188,7 +188,8 @@ engine at one visit, capturing the 22-plane feature tensors where `serveEvals`
 sees them, and froze the TensorFlow.js fp32 outputs -- the implementation that
 agrees with native to 1e-6 -- as goldens under `public/check/`.
 
-    node scripts/check-headless.mjs   # ~1 min against a running dev server
+    node scripts/check-headless.mjs   # tiers 1+2, ~1 min against a running dev server
+    node scripts/check-perf.mjs       # tier 3, ~3 min, working tree against HEAD
 
 - **Tier 1, correctness**: `check.html` runs the hand fp32 backend over 18
   stored positions and compares all four heads against the goldens, tolerance
@@ -205,17 +206,27 @@ agrees with native to 1e-6 -- as goldens under `public/check/`.
   against the previous run, so drift cannot ratchet. The mean sits ~7
   standard errors under its threshold and a doubling of error ~16 above; the
   whole pipeline is deterministic, so a passing run repeats to the last digit.
+- **Tier 3, speed**: the working tree against a baseline commit, the check
+  page in both versions bundled the same way and served side by side, one
+  browser, two tabs, never both timing at once. Timed slices alternate
+  between the tabs, each pair alternates its order, and a pair whose two
+  clock bands (`gt_act_freq_mhz`, sampled at 250 ms) disagree by over 15% is
+  thrown out. Verdict is a paired t on log-ratios plus a sign test: fail
+  under 0.95 with the 95% interval excluding 1.0, warn under 0.98. An A/A
+  run across a 950-to-650 MHz throttle reads 0.996 [0.966, 1.027] at batch
+  48, so a drift has to reach roughly 5% before this convicts it.
 
-Both tiers were proven on seeded bugs: fp16 weights quantized 16x coarser
+The correctness tiers were proven on seeded bugs: fp16 weights quantized 16x coarser
 fails every tier-2 metric (mean 0.15 against the 0.065 limit), and an
 off-by-one in the Winograd untransform's edge clip -- which writes one row
 into the next image -- fails tier 1 at errors around 10 and breaks batch
 invariance, while leaving the first image of every batch clean.
 
 What this cannot catch: anything outside the net evaluation (the search, the
-bridge, the batching logic), and an error of the same size and shape as fp16
-storage noise. A change to those still wants `match-headless` and
-`score.mjs`, which is hours rather than minutes.
+bridge, the batching logic), an error of the same size and shape as fp16
+storage noise, and a speed change under a few percent. A change to those
+still wants `match-headless` and `score.mjs`, which is hours rather than
+minutes.
 
 ## What it has to beat
 
