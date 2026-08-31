@@ -101,7 +101,7 @@ export async function open(url, { expose = {}, onError = () => {} } = {}) {
 
 /** Resolves when the log says the page is finished, whether it worked or not. */
 export const finished = (page) => page.waitForFunction(
-  () => /\n(done|ERROR:)/.test(document.getElementById('log').textContent),
+  () => /(^|\n)(done|ERROR:)/.test(document.getElementById('log').textContent),
   null, { timeout: 0 });
 
 export async function close(browser, page) {

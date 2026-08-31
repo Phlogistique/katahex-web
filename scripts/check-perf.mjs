@@ -72,13 +72,6 @@ const url = (which) => `${BASE}/build/perf/${which}/index.html?mode=perf`;
 const { browser, page: candidate } = await open(url('candidate'), {
   onError: (message) => console.error('[candidate]', message),
 });
-const baseline = await browser.newPage();
-baseline.on('pageerror', (error) => console.error('[baseline]', error.message));
-await baseline.goto(url(baselineSha));
-for (const page of [candidate, baseline]) {
-  await page.waitForFunction(() => globalThis.perfReady === true, null, { timeout: 120000 });
-}
-
 async function slice(page, batch, evals) {
   const frequency = watchFrequency();
   const ms = await page.evaluate(
@@ -87,23 +80,35 @@ async function slice(page, batch, evals) {
 }
 
 const results = [];
-for (const { batch, evals, pairs } of SWEEPS) {
-  // Warm both plans outside the timing.
-  await slice(candidate, batch, 2);
-  await slice(baseline, batch, 2);
-  for (let i = 0; i < pairs; i++) {
-    // Order alternates so throttling drift lands on both sides equally.
-    const candidateFirst = i % 2 === 0;
-    const first = await slice(candidateFirst ? candidate : baseline, batch, evals);
-    const second = await slice(candidateFirst ? baseline : candidate, batch, evals);
-    const [c, b] = candidateFirst ? [first, second] : [second, first];
-    const kept = Math.abs(c.mhz - b.mhz) / Math.min(c.mhz, b.mhz) <= 0.15;
-    results.push({ batch, c, b, kept });
-    console.error(`batch ${batch} pair ${i}: candidate ${c.ms.toFixed(0)} ms @ ${c.mhz} MHz, ` +
-      `baseline ${b.ms.toFixed(0)} ms @ ${b.mhz} MHz` + (kept ? '' : ' (rejected: bands differ)'));
+try {
+  const baseline = await browser.newPage();
+  baseline.on('pageerror', (error) => console.error('[baseline]', error.message));
+  await baseline.goto(url(baselineSha));
+  for (const page of [candidate, baseline]) {
+    await page.waitForFunction(() => globalThis.perfReady === true, null, { timeout: 120000 });
   }
+
+  for (const { batch, evals, pairs } of SWEEPS) {
+    // Warm both plans outside the timing.
+    await slice(candidate, batch, 2);
+    await slice(baseline, batch, 2);
+    for (let i = 0; i < pairs; i++) {
+      // Order alternates so throttling drift lands on both sides equally.
+      const candidateFirst = i % 2 === 0;
+      const first = await slice(candidateFirst ? candidate : baseline, batch, evals);
+      const second = await slice(candidateFirst ? baseline : candidate, batch, evals);
+      const [c, b] = candidateFirst ? [first, second] : [second, first];
+      // NaN medians mean the box has no frequency counter: keep the pair,
+      // there is no band evidence against it.
+      const kept = !(Math.abs(c.mhz - b.mhz) / Math.min(c.mhz, b.mhz) > 0.15);
+      results.push({ batch, c, b, kept });
+      console.error(`batch ${batch} pair ${i}: candidate ${c.ms.toFixed(0)} ms @ ${c.mhz} MHz, ` +
+        `baseline ${b.ms.toFixed(0)} ms @ ${b.mhz} MHz` + (kept ? '' : ' (rejected: bands differ)'));
+    }
+  }
+} finally {
+  await close(browser, candidate);
 }
-await close(browser, candidate);
 
 // ---------------------------------------------------------------------------
 // Judgment: paired t on log-ratios plus a sign test, per batch size

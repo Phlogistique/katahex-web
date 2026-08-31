@@ -196,7 +196,8 @@ agrees with native to 1e-6 -- as goldens under `public/check/`.
   1e-3. Observed agreement is 1e-5 to 3e-5; real bugs land orders of
   magnitude higher; nothing plausible lives in between. The same positions go
   through as one batch of 16, as 5+11, and alone -- batch shape must not
-  change an answer (observed: bit-exact).
+  change an answer (observed: bit-exact) -- and tiled to batch 48 against the
+  goldens, since each batch size compiles its own plan.
 - **Tier 2, fp16 accuracy**: fp16 against the live fp32 that tier 1 just
   pinned, over 512 stored positions, so fp32 stands in for the oracle at
   fp16's 0.05 error scale. Mean, p95 and max of the policy logit error, the

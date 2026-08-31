@@ -59,6 +59,13 @@ function slicePositions(data: Float32Array, count: number, size: number): Positi
   return out;
 }
 
+async function loadBank(): Promise<Position[]> {
+  const raw = new Float32Array((await fetchBytes('/check/bank-11.bin.gz')).buffer);
+  const count = raw.length / (11 * 11 * SPATIAL + GLOBAL);
+  if (!Number.isInteger(count)) throw new Error(`bank-11 truncated: ${raw.length} floats`);
+  return slicePositions(raw, count, 11);
+}
+
 function evaluateBatch(model: KataGoWebGpuModel, positions: Position[], size: number): Promise<NetOutputs> {
   const hw = size * size;
   const spatial = new Float32Array(positions.length * hw * SPATIAL);
@@ -142,6 +149,20 @@ async function tier1(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMod
         batchDiff = Math.max(batchDiff, ...Object.values(worst));
       }
       results.push({ id: 'batch-invariance', worst: { policy: batchDiff }, finite: true });
+
+      // Each batch size compiles its own Plan with dispatch shapes baked in,
+      // and the engine batches up to nnMaxBatchSize = 128 -- so a large batch
+      // is a code path of its own; check one against the goldens absolutely.
+      const tiled = Array.from({ length: 48 }, (_, i) => ofSize[i % ofSize.length]);
+      const big = await evaluateBatch(model, tiled, size);
+      const worst48: Record<string, number> = {};
+      let finite48 = true;
+      tiled.forEach((p, i) => {
+        const { worst, finite } = compare(heads(big, i), p.golden);
+        finite48 &&= finite;
+        for (const [k, v] of Object.entries(worst)) worst48[k] = Math.max(worst48[k] ?? 0, v);
+      });
+      results.push({ id: 'batch-48', worst: worst48, finite: finite48 });
     }
     model.dispose();
   }
@@ -151,9 +172,8 @@ async function tier1(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMod
 }
 
 async function tier2(device: GPUDevice, parsed: ReturnType<typeof parseKataGoModelV8>) {
-  const raw = new Float32Array((await fetchBytes('/check/bank-11.bin.gz')).buffer);
-  const count = raw.length / (11 * 11 * SPATIAL + GLOBAL);
-  const positions = slicePositions(raw, count, 11);
+  const positions = await loadBank();
+  const count = positions.length;
   const models = {
     fp32: new KataGoWebGpuModel(device, parsed, 11, false),
     fp16: new KataGoWebGpuModel(device, parsed, 11, true),
@@ -216,8 +236,7 @@ async function tier2(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMod
 async function perf(device: GPUDevice, parsed: ReturnType<typeof parseKataGoModelV8>) {
   const half = params.get('half') !== '0';
   const model = new KataGoWebGpuModel(device, parsed, 11, half);
-  const raw = new Float32Array((await fetchBytes('/check/bank-11.bin.gz')).buffer);
-  const positions = slicePositions(raw, raw.length / (11 * 11 * SPATIAL + GLOBAL), 11);
+  const positions = await loadBank();
 
   (globalThis as Record<string, unknown>).runSlice = async (batch: number, evals: number) => {
     const chunk = Array.from({ length: batch }, (_, i) => positions[i % positions.length]);

@@ -43,6 +43,10 @@ const judge = (ok, line) => {
 };
 
 // -- tier 1 --
+// Pin the check counts: a page that quietly ran fewer checks must not pass.
+const manifest = JSON.parse(readFileSync(new URL('../public/check/tier1.json', import.meta.url), 'utf8'));
+const expected = manifest.positions.length + 2; // + batch-invariance + batch-48
+judge(report.tier1.length === expected, `tier1 ran ${report.tier1.length} checks (expected ${expected})`);
 for (const { id, worst, finite } of report.tier1) {
   const worstOfAll = Math.max(...Object.values(worst));
   judge(finite && worstOfAll <= TIER1_TOLERANCE,
@@ -66,6 +70,8 @@ if (calibrate) {
   // observed -> 2x); relative to the frozen calibration elsewhere. SE of the
   // mean over 512 positions is ~0.0022, so the null sits ~7 SE under its
   // threshold and a doubling of error ~16 SE above.
+  judge(m.positions === frozen.positions,
+    `tier2 bank has ${m.positions} positions (frozen at ${frozen.positions})`);
   judge(m.meanAbsErr <= 0.065, `tier2 mean |logit err| ${m.meanAbsErr.toFixed(4)} (limit 0.065)`);
   judge(m.p95 <= 1.5 * frozen.p95, `tier2 p95 ${m.p95.toFixed(4)} (limit ${(1.5 * frozen.p95).toFixed(4)})`);
   judge(m.max <= 1.2, `tier2 max ${m.max.toFixed(3)} (limit 1.2)`);
