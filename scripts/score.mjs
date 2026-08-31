@@ -83,3 +83,19 @@ for (const [key, { visits, rows, ms, moves }] of speed) {
     `${Math.round(rows / moves)} evals/move, ${Math.round(visits / moves)} visits/move ` +
     `(${(visits / Math.max(1, rows)).toFixed(2)} visits/eval) over ${moves} moves`);
 }
+
+// When one side just searches more than the other, what the extra search is
+// worth per doubling. Off the visits actually reached, not the cap asked for:
+// a search overshoots maxVisits by up to threads x leaf evals, because the
+// evaluations already in flight drain before it stops.
+const [sideA, sideB] = [...speed.values()];
+if (sideA && sideB && typeof score === 'number') {
+  const doublings = Math.log2((sideA.visits / sideA.moves) / (sideB.visits / sideB.moves));
+  if (Math.abs(doublings) > 0.2 && score > 0 && score < 1) {
+    const point = -400 * Math.log10(1 / score - 1);
+    console.log(`${doublings.toFixed(2)} doublings of search, ` +
+      `so ${(point / doublings).toFixed(0)} elo per doubling ` +
+      `(${elo(score - 1.96 * stderr / 2)} to ${elo(score + 1.96 * stderr / 2)} elo, ` +
+      `divided by ${doublings.toFixed(2)})`);
+  }
+}
