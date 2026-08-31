@@ -266,24 +266,27 @@ limit at 16 or 32 threads -- and reaches 91% of native at 32. Native is still
 gaining at 64 where the page has fallen apart, because every thread here is a
 worker and sixty of them cost more than they bring.
 
-**Sixteen is what it ships with, not thirty-two.** A lone search is fastest at 32,
-but the ui asks for two positions at once -- the evaluation graph fills in while a
-position is searched -- and the threads of both searches queue against the same
-net, so what sets the batch is the total. Two analysis threads of 16 stay at the
-32 that measures best; two of 32 would spend that time in the 64-thread regime,
-which is worse than either. The batch wait ships at 3 ms (`?batchwait=N` to
-override).
+**One search thread with 64 leaf evals in flight is what it ships with**
+(`?threads=N`, `?leaves=N`). The batch a search can form is set by how many
+evals it keeps in flight, and threads were only ever a way of holding evals: a
+blocked thread holds exactly one. Above one leaf eval per thread, a thread
+that reaches a new leaf queues the eval and goes back to start another
+playout, collecting results as they return -- so in-flight count and thread
+count come apart, and one thread feeding the queue keeps the GPU in ~50-row
+batches by itself, with none of the cost of sixteen workers. The ui still
+asks for two positions at once (the evaluation graph fills in while a
+position is searched), now one thread each. The batch wait ships at 3 ms
+(`?batchwait=N`).
 
-**Each thread keeps two leaf evals in flight** (`?leaves=N`, 2 by default),
-because the batch a search could form was capped by its thread count: every
-thread sat blocked on the one eval it had submitted. Now a thread that reaches
-a new leaf queues the eval and goes back to start another playout, collecting
-results once two are pending, so 16 threads fill 32-row batches and a lone
-search gains 18% (132 to 156 visits/s). Bigger batches keep paying on the net
-alone -- its ladder climbs to ~200 rows/s at 96-128 rows -- but three evals per
-thread measures 10-20% *worse* than two: a pending playout holds virtual losses
-along its whole path, and past two per thread that distorts move selection by
-more than the rows buy.
+**64 in flight is a measured knee, and the currency it is paid in is move
+selection.** Every pending playout holds virtual losses along its whole path
+so the next descent goes somewhere new; the more there are, the more the
+search is aimed by fake losses. Sweeping one thread's in-flight count: 32
+gives 168 visits/s, 48 gives 180, 64 gives 188, 96 falls back to 182 -- where
+sixteen threads of two in flight, the previous default, did 157, and the
+original page with every thread blocked on the one eval it had submitted did
+132. Whether a 64-in-flight visit is worth as much as a 32-in-flight one is a
+strength question these wall-clock numbers do not answer.
 
 That the curve keeps climbing past 16 at all is a late correction. Measured
 earlier the same day it flattened at 66 from 16 threads on, which reads exactly

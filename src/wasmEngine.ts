@@ -26,11 +26,10 @@ export type WasmEngineOptions = {
   /** Half precision: twice the speed, and the error the native engine also has. */
   half?: boolean;
   /**
-   * Threads searching one position. They are what fills the net's batches: a
-   * lone search runs at 90 visits/s with 16 threads and 96 with 32. Sixteen
-   * rather than 32 because two positions are searched at once and their
-   * threads queue against the same net, and 64 threads between them is slower
-   * than 32.
+   * Threads searching one position. One: threads were only ever a way of
+   * holding evals in flight, a blocked thread holds exactly one, and
+   * leafEvals now sets the in-flight count directly. One thread with 64 in
+   * flight measures faster than sixteen threads with two each.
    */
   searchThreads?: number;
   /**
@@ -47,11 +46,13 @@ export type WasmEngineOptions = {
    */
   serverThreads?: number;
   /**
-   * Leaf evaluations each search thread may have in flight at once. Above one,
-   * a thread queues a leaf's eval and starts another playout instead of
-   * blocking, so the same threads fill bigger batches. Two moves a lone
-   * 16-thread search from batch 16 to 32 and is worth +18%; three loses more
-   * to distorted move selection than the still bigger batch buys.
+   * Leaf evaluations each search thread may have in flight at once. A thread
+   * that reaches a new leaf queues the eval and starts another playout
+   * instead of blocking, so one thread alone keeps the GPU in ~50-row
+   * batches. Sweeping one thread's in-flight count: 32 gives 168 visits/s,
+   * 48 gives 180, 64 gives 188, 96 falls back to 182 -- every pending
+   * playout holds virtual losses along its path, and past 64 that distorts
+   * move selection by more than the rows buy.
    */
   leafEvals?: number;
   /** Time every GPU dispatch (slower; see webgpuModel.profile). */
@@ -64,10 +65,10 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
     enginePath = '/katahex.js',
     modelPath = '/hex27x3.bin.gz',
     half = true,
-    searchThreads = 16,
+    searchThreads = 1,
     batchWaitMicros = 3000,
     serverThreads = 2,
-    leafEvals = 2,
+    leafEvals = 64,
     profile = false,
     onStats,
   } = options;
