@@ -46,6 +46,14 @@ export type WasmEngineOptions = {
    * packed, submitted and read back.
    */
   serverThreads?: number;
+  /**
+   * Leaf evaluations each search thread may have in flight at once. Above one,
+   * a thread queues a leaf's eval and starts another playout instead of
+   * blocking, so the same threads fill bigger batches. Two moves a lone
+   * 16-thread search from batch 16 to 32 and is worth +18%; three loses more
+   * to distorted move selection than the still bigger batch buys.
+   */
+  leafEvals?: number;
   /** Time every GPU dispatch (slower; see webgpuModel.profile). */
   profile?: boolean;
   onStats?: (stats: EvalStats) => void;
@@ -59,6 +67,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
     searchThreads = 16,
     batchWaitMicros = 3000,
     serverThreads = 2,
+    leafEvals = 2,
     profile = false,
     onStats,
   } = options;
@@ -79,7 +88,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
-      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, profile, enginePath, modelPath });
+      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, leafEvals, profile, enginePath, modelPath });
     },
 
     query(json) {

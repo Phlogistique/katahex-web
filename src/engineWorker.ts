@@ -14,7 +14,7 @@ import { KataGoWebGpuModel } from './webgpuModel';
 
 export type ToEngine =
   | { kind: 'start'; boardSize: number; half: boolean; searchThreads: number;
-      batchWaitMicros?: number; serverThreads?: number; profile?: boolean;
+      batchWaitMicros?: number; serverThreads?: number; leafEvals?: number; profile?: boolean;
       enginePath: string; modelPath: string }
   | { kind: 'query'; json: string };
 
@@ -31,11 +31,13 @@ const NUM_ANALYSIS_THREADS = 2;
 const post = (message: FromEngine) => self.postMessage(message);
 
 /** Mostly the config the Android app writes, minus what is about a phone. */
-const config = (boardSize: number, searchThreads: number, batchWaitMicros: number, serverThreads: number) => `
+const config = (boardSize: number, searchThreads: number, batchWaitMicros: number, serverThreads: number,
+                leafEvals: number) => `
 numAnalysisThreads = ${NUM_ANALYSIS_THREADS}
 numSearchThreadsPerAnalysisThread = ${searchThreads}
+numLeafEvalsPerThread = ${leafEvals}
 numNNServerThreadsPerModel = ${serverThreads}
-nnMaxBatchSize = ${NUM_ANALYSIS_THREADS * searchThreads}
+nnMaxBatchSize = ${NUM_ANALYSIS_THREADS * searchThreads * leafEvals}
 nnServeBatchWaitMicros = ${batchWaitMicros}
 maxBoardXSizeForNNBuffer = ${boardSize}
 maxBoardYSizeForNNBuffer = ${boardSize}
@@ -69,7 +71,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   // The newer knobs default here: this is a postMessage boundary, and a
   // driver built against an older shape must keep working.
   const { boardSize, half, searchThreads, batchWaitMicros = 3000, serverThreads = 2,
-          profile = false, enginePath, modelPath } = options;
+          leafEvals = 1, profile = false, enginePath, modelPath } = options;
 
   const gpu = await navigator.gpu?.requestAdapter();
   const wanted: GPUFeatureName[] = [];
@@ -100,7 +102,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   });
 
   module.FS.writeFile('/model.bin', raw);
-  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros, serverThreads));
+  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros, serverThreads, leafEvals));
 
   const model = new KataGoWebGpuModel(device, parseKataGoModelV8(raw), boardSize, half);
   model.profile = profile;

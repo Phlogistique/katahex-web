@@ -274,6 +274,17 @@ net, so what sets the batch is the total. Two analysis threads of 16 stay at the
 which is worse than either. The batch wait ships at 3 ms (`?batchwait=N` to
 override).
 
+**Each thread keeps two leaf evals in flight** (`?leaves=N`, 2 by default),
+because the batch a search could form was capped by its thread count: every
+thread sat blocked on the one eval it had submitted. Now a thread that reaches
+a new leaf queues the eval and goes back to start another playout, collecting
+results once two are pending, so 16 threads fill 32-row batches and a lone
+search gains 18% (132 to 156 visits/s). Bigger batches keep paying on the net
+alone -- its ladder climbs to ~200 rows/s at 96-128 rows -- but three evals per
+thread measures 10-20% *worse* than two: a pending playout holds virtual losses
+along its whole path, and past two per thread that distorts move selection by
+more than the rows buy.
+
 That the curve keeps climbing past 16 at all is a late correction. Measured
 earlier the same day it flattened at 66 from 16 threads on, which reads exactly
 like a search too slow in WebAssembly to feed the net. It was not: four
