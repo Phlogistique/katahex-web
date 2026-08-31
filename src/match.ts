@@ -26,9 +26,10 @@ export type Result = {
   black: Side;
   white: Side;
   winner: Player;
-  /** Both set the batch size, and so what half precision is worth. */
+  /** All three set the batch size, and so what half precision is worth. */
   threads: number;
   batchWaitMicros: number;
+  leafEvals: number;
   reason: 'connection' | 'resign' | 'no-moves';
   turns: Turn[];
   seconds: number;
@@ -36,8 +37,9 @@ export type Result = {
 
 const params = new URLSearchParams(location.search);
 const SIZE = Number(params.get('size') ?? 11);
-const THREADS = Number(params.get('threads') ?? 16);
+const THREADS = Number(params.get('threads') ?? 1);
 const BATCH_WAIT = Number(params.get('batchwait') ?? 3000);
+const LEAVES = Number(params.get('leaves') ?? 64);
 
 /** A side that thinks it is this far behind, for this many of its own turns, gives up. */
 const RESIGN_WINRATE = 0.02;
@@ -105,7 +107,7 @@ async function playGame(
           : null);
     if (!chosen) {
       return {
-        ...job, winner: other(player), threads: THREADS, batchWaitMicros: BATCH_WAIT, reason: 'no-moves',
+        ...job, winner: other(player), threads: THREADS, batchWaitMicros: BATCH_WAIT, leafEvals: LEAVES, reason: 'no-moves',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -114,7 +116,7 @@ async function playGame(
     losing[player] = winrate < RESIGN_WINRATE ? losing[player] + 1 : 0;
     if (losing[player] >= RESIGN_TURNS) {
       return {
-        ...job, winner: other(player), threads: THREADS, batchWaitMicros: BATCH_WAIT, reason: 'resign',
+        ...job, winner: other(player), threads: THREADS, batchWaitMicros: BATCH_WAIT, leafEvals: LEAVES, reason: 'resign',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -124,7 +126,7 @@ async function playGame(
 
     if (connected(stones(moves, SIZE), SIZE, player)) {
       return {
-        ...job, winner: player, threads: THREADS, batchWaitMicros: BATCH_WAIT, reason: 'connection',
+        ...job, winner: player, threads: THREADS, batchWaitMicros: BATCH_WAIT, leafEvals: LEAVES, reason: 'connection',
         turns, seconds: (performance.now() - startedAt) / 1000,
       };
     }
@@ -146,8 +148,8 @@ async function main() {
       const spec: Record<Seat, Side> =
         seats.B === 'a' ? { a: job.black, b: job.white } : { a: job.white, b: job.black };
       engines = {
-        a: new AnalysisEngine(spec.a.precision, SIZE, log, THREADS, BATCH_WAIT),
-        b: new AnalysisEngine(spec.b.precision, SIZE, log, THREADS, BATCH_WAIT),
+        a: new AnalysisEngine(spec.a.precision, SIZE, log, THREADS, BATCH_WAIT, LEAVES),
+        b: new AnalysisEngine(spec.b.precision, SIZE, log, THREADS, BATCH_WAIT, LEAVES),
       };
       const both = engines;
       (globalThis as { stopEngines?: () => void }).stopEngines =

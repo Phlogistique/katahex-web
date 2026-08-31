@@ -35,16 +35,17 @@ export class AnalysisEngine {
     readonly precision: Precision,
     private size: number,
     private onLog: (line: string) => void = () => {},
-    // Named rather than left to the worker's default: thread count sets the
-    // batch size the search produces, and half precision is worth much more at
-    // a small batch than a large one, so the two arms of a match have to agree
-    // on it and a result has to record it.
-    readonly searchThreads = 16,
+    // Named rather than left to the worker's default: threads and leaf evals
+    // together set the batch size the search produces, and half precision is
+    // worth much more at a small batch than a large one, so the two arms of a
+    // match have to agree on them and a result has to record them.
+    readonly searchThreads = 1,
     // Waiting a moment before serving a batch is what keeps it full: without it
     // a returning batch's threads re-queue behind the ones already waiting and
     // the two groups alternate at half the thread count forever. It changes the
     // batch size, and so what half precision is worth, so a match names it.
     readonly batchWaitMicros = 3000,
+    readonly leafEvals = 64,
   ) {
     this.worker = new Worker(new URL('./engineWorker.ts', import.meta.url), { type: 'module' });
     let ready!: () => void;
@@ -68,6 +69,7 @@ export class AnalysisEngine {
       kind: 'start', boardSize: size, half: precision === 'fp16',
       searchThreads: this.searchThreads,
       batchWaitMicros: this.batchWaitMicros,
+      leafEvals: this.leafEvals,
       profile: false,
       enginePath: '/katahex.js', modelPath: '/hex27x3.bin.gz',
     };
