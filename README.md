@@ -493,6 +493,16 @@ choose fp16 for the footprint, not for the strength. The download is the same
 either way -- `hex27x3.bin.gz` stores fp32, and `?fp32` only changes what the
 loader casts it to.
 
+Those games ran at 16 search threads with one leaf evaluation in flight each,
+which the driver took by accident: it posts to `engineWorker.ts` directly and so
+inherited that module's default rather than the page's. Batches of ~16 rows is
+the smallest the config space reaches, and the smallest batch is where half
+precision has least to gain, so the null above is the least favourable reading
+of fp16 available. At the 1 thread by 64 leaves the page now ships, a paired run
+over 8 games puts fp16 at 163 evaluations a move against fp32's 127 -- 1.28x
+rather than 1.18x, so about 52 predicted elo rather than 34. Still inside the
+interval, so the conclusion carries; it has less room than it did.
+
 The three arms agree. fp16 serves 117 evaluations a move against fp32's 99, so
 1.18x the work, which is 0.24 doublings. The search arm prices a doubling at 143
 elo (over evaluations; 125 over visits, which are inflated differently in the two
