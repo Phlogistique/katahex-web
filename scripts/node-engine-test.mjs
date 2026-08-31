@@ -6,6 +6,7 @@
 // against the native engine on the same queries to check the bridge: the numbers
 // should agree to float error.
 
+import { writeSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +29,10 @@ const createModule = require(ENGINE);
 // this process's own stdin rather than through a JavaScript hook.
 const Module = await createModule({
   noInitialRun: true,
+  // Synchronous, because callMain blocks this thread on stdin: an async
+  // console.log to a pipe would sit in the event loop's queue until EOF, and a
+  // driver waiting on the reply before sending the next query would deadlock.
+  print: (line) => writeSync(1, line + '\n'),
   printErr: (line) => {
     if (process.env.VERBOSE) console.error('[engine]', line);
   },

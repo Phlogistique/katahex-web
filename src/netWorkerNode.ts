@@ -68,6 +68,24 @@ async function main() {
     },
   };
 
+  // NET_CAPTURE records every evaluation -- inputs and outputs, one JSON line
+  // each -- which is how scripts/make-positions.mjs turns positions the engine
+  // reaches into stored feature tensors and TensorFlow.js golden outputs.
+  const capture = process.env.NET_CAPTURE;
+  const evaluate = evaluator.evaluate.bind(evaluator);
+  if (capture) {
+    evaluator.evaluate = async (spatial, global, batch) => {
+      const out = await evaluate(spatial, global, batch);
+      appendFileSync(capture, JSON.stringify({
+        batch,
+        spatial: [...spatial], global: [...global],
+        policy: out.policy.map((row) => [...row]), policyPass: [...out.policyPass],
+        value: out.value.map((row) => [...row]), scoreValue: out.scoreValue.map((row) => [...row]),
+      }) + '\n');
+      return out;
+    };
+  }
+
   await serveEvals(memory, controlAddress, evaluator, {
     onEval: (stats) => parentPort!.postMessage({ kind: 'stats', stats }),
   });

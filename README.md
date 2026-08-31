@@ -177,6 +177,46 @@ re-initialized on every iteration, but this Intel/Mesa driver does not, which
 turned a per-tile accumulator into a prefix sum and the whole net into NaN.
 Zero explicitly.
 
+### The non-regression gate
+
+A change to `webgpuModel.ts` is checked in two tiers, without playing a
+single game. `scripts/make-positions.mjs` built the fixtures once: it replayed
+positions from recorded games (plus constructed ones -- empty boards, lone
+corner stones, stones packed into the board edge the Winograd tiles pad, a
+saturated win, the same position with each side to move) through the node
+engine at one visit, capturing the 22-plane feature tensors where `serveEvals`
+sees them, and froze the TensorFlow.js fp32 outputs -- the implementation that
+agrees with native to 1e-6 -- as goldens under `public/check/`.
+
+    node scripts/check-headless.mjs   # ~1 min against a running dev server
+
+- **Tier 1, correctness**: `check.html` runs the hand fp32 backend over 18
+  stored positions and compares all four heads against the goldens, tolerance
+  1e-3. Observed agreement is 1e-5 to 3e-5; real bugs land orders of
+  magnitude higher; nothing plausible lives in between. The same positions go
+  through as one batch of 16, as 5+11, and alone -- batch shape must not
+  change an answer (observed: bit-exact).
+- **Tier 2, fp16 accuracy**: fp16 against the live fp32 that tier 1 just
+  pinned, over 512 stored positions, so fp32 stands in for the oracle at
+  fp16's 0.05 error scale. Mean, p95 and max of the policy logit error, the
+  worst per-cell signed bias (which is what an edge-tile bug looks like),
+  top-1 flips, policy KL and the value head's winrate shift, each against a
+  constant frozen at calibration in `public/check/frozen-11.json` -- never
+  against the previous run, so drift cannot ratchet. The mean sits ~7
+  standard errors under its threshold and a doubling of error ~16 above; the
+  whole pipeline is deterministic, so a passing run repeats to the last digit.
+
+Both tiers were proven on seeded bugs: fp16 weights quantized 16x coarser
+fails every tier-2 metric (mean 0.15 against the 0.065 limit), and an
+off-by-one in the Winograd untransform's edge clip -- which writes one row
+into the next image -- fails tier 1 at errors around 10 and breaks batch
+invariance, while leaving the first image of every batch clean.
+
+What this cannot catch: anything outside the net evaluation (the search, the
+bridge, the batching logic), and an error of the same size and shape as fp16
+storage noise. A change to those still wants `match-headless` and
+`score.mjs`, which is hours rather than minutes.
+
 ## What it has to beat
 
 Native OpenCL on this laptop's Iris Xe does 37.5 visits/s at 4 search threads, 83
