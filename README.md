@@ -59,21 +59,24 @@ evaluations a second over the same batch sizes.
 
 ## Where the remaining gap is
 
-Not in the web platform. `micro.html` runs a tiled matrix multiply written by
-hand in WGSL, which is what a convolution becomes:
+Not in the web platform. `micro.html` runs the matmul kernel written by hand in
+WGSL, which is what a convolution becomes, over the shapes the net spends its
+time in:
 
-| shape                            | fp32 | fp16 |
-| -------------------------------- | ---- | ---- |
-| 2048 square                      | 473  | 698  |
-| one trunk conv, batch 64         | 460  | 678  |
+| shape                                 | fp32 | fp16 |
+| ------------------------------------- | ---- | ---- |
+| 2048 square                           | 565  | 974  |
+| the trunk's Winograd matmul, batch 48 | 548  | 958  |
+| its 1x1 convolutions, batch 48        | 546  | 955  |
 
-GFLOP/s, and the skinny convolution shape costs nothing against the square one.
+GFLOP/s at the tile the backend ships, out of the several the page sweeps. The
+net's skinny shapes cost nothing against the square one.
 
 The net needs 6.33 GFLOP per evaluation, 90% of it in the 62 3x3 convolutions of
 the trunk. At 52 evaluations a second onnxruntime is getting 329 GFLOP/s out of
-this GPU, less than half of what the hand-written kernel above reaches on the
-same shape in the same browser. Feed the net through a kernel that good and it
-would run at about 110 evaluations a second, next to native's 128.
+this GPU, a third of what the hand-written kernel above reaches in the same
+browser. Feed the net through a kernel that good and it would run at about 150
+evaluations a second, past native's 128.
 
 So the gap is onnxruntime's convolution, not WebGPU. Two things it lacks:
 
@@ -143,24 +146,44 @@ kernels for batchnorm+mish, residual adds, and KataGo's global pooling. The
 forward pass for a batch size compiles once into a flat list of dispatches
 with every shape baked into its shader.
 
-Evaluations per second on 11x11 fp16, hand-written against onnxruntime in the
-same sitting:
+Evaluations per second on 11x11, one sitting, each batch size measured on the
+way up the ladder and again on the way down and the two averaged, because the
+GPU throttles as the sweep heats it. One significant figure:
 
-| batch | hand-written | onnxruntime |
-| ----- | ------------ | ----------- |
-| 1     | 25.8         | 11.0        |
-| 2     | 45.4         | 21.3        |
-| 4     | 72.2         | 32.3        |
-| 8     | 82.8         | 41.7        |
-| 16    | 106.1        | 49.0        |
-| 32    | 120.0        | 51.4        |
-| 64    | 109.0        | 53.0        |
+| batch | fp16 | fp32 |
+| ----- | ---- | ---- |
+| 1     | 38   | 31   |
+| 2     | 74   | 60   |
+| 4     | 110  | 87   |
+| 8     | 148  | 106  |
+| 16    | 185  | 107  |
+| 32    | 207  | 119  |
+| 48    | 212  | 121  |
+| 64    | 224  | 116  |
+| 128   | 224  | 106  |
 
-2.1-2.4x at every batch size, and the top of the curve sits next to native
-OpenCL's 128 visits/s. A single evaluation takes 39 ms where onnxruntime and
-native OpenCL both take about 90, which shortens the latency-bound early
-search. fp32 reaches 68 evaluations a second, still 2.2x onnxruntime's fp32;
-13x13 fp16 about 60, where the 4x4 Winograd tiles fit the board worst.
+The two columns are not comparable to each other: the fp32 sweep ran at a
+median 550 MHz against the fp16 one's 700. A single evaluation takes 26 ms
+where onnxruntime and native OpenCL both take about 90, which shortens the
+latency-bound early search, and the top of the curve is well past the 128
+evaluations a second native OpenCL reaches on this GPU. onnxruntime was
+2.1-2.4x behind at every batch size when the two were last measured side by
+side, before the Winograd transforms and the matmul were tuned.
+
+The matmul carries nearly all of the arithmetic, so it is the kernel that has
+been tuned. A workgroup computes 64 output columns by 64 rows, or 32 rows where
+rows are scarce -- the Winograd matmul has 9 real rows per image on 11x11 --
+and each thread holds 4x4 of them in vec4 registers. Both tiles move through
+shared memory as vec4, 32 steps of the reduction at a time (16 for the head
+layers, whose channel counts do not divide by 32), with the reduction emitted
+unrolled. Against the scalar version that is 1.207 [1.200, 1.213] over
+the whole net at batch 48 and 1.525 [1.485, 1.566] at batch 1 (tier 3), and 735
+to 958 GFLOP/s on the trunk's Winograd matmul alone.
+
+`micro.html` sweeps the tile parameters over those shapes. Two that look better
+on paper are not: 4 rows by 8 columns per thread wins 2% at batch 48 and loses
+8% at batch 1, and both it and 8 rows by 4 fall to 15-100 GFLOP/s in fp32,
+where the accumulators stop fitting in registers.
 
 Correctness is checked on every load against the TensorFlow.js implementation
 of the same net, two codepaths sharing only the weight file: fp32 agrees to
