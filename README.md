@@ -322,6 +322,15 @@ The fp16-against-fp32 ratio is deliberately not quoted here. It was measured at
 the design the leak defeats. A paired measurement over 189 moves put it at 1.2x
 instead. Precision is worth something, but not what this page claimed.
 
+Alternating whole sweeps is still not enough. Four sweeps in each order, minutes
+apart on an idle machine, read 11x11 batch 32 at 140 and 100 evals/s in fp32 and
+at 145 and 188 in fp16 -- a ratio of 1.00 one way round and 1.76 the other. The
+reversed sweep detects the drift (the same run's up and down legs disagree by up
+to 50%) but does not remove it. A precision ratio off this page needs the two
+models alternating measurement by measurement in one process, not sweep by
+sweep. The numbers above also predate the coalesced Winograd transforms and now
+read low.
+
 ## Engine
 
 `scripts/build-engine.sh` cross-compiles the KataHex engine to WebAssembly. It
