@@ -44,6 +44,9 @@ const tree = (root) => {
   return found;
 };
 
+/** The chrome-headless pids each launched browser brought with it. */
+const ours = new WeakMap();
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function open(url, { expose = {}, onError = () => {} } = {}) {
@@ -57,6 +60,10 @@ export async function open(url, { expose = {}, onError = () => {} } = {}) {
   }
 
   const browser = await chromium.launch({ args: ARGS });
+  // Playwright has no accessor for the process it launched, so the browser's
+  // own pids are whatever chrome-headless appeared across the call. Nothing was
+  // running before it: the guard above just said so.
+  ours.set(browser, alive());
   const page = await browser.newPage();
   page.on('pageerror', (error) => onError(error.message));
   // Everything the page calls has to exist before it is loaded: it asks for its
@@ -72,26 +79,25 @@ export const finished = (page) => page.waitForFunction(
   null, { timeout: 0 });
 
 export async function close(browser, page) {
-  // Only ever this browser's own tree. Other sessions share the machine and run
+  // Only ever this browser's own trees. Other sessions share the machine and run
   // their own headless chromium; killing every chrome-headless in sight would
   // take out someone else's job, or a second run of our own.
-  const root = browser.process()?.pid;
+  const roots = ours.get(browser) ?? [];
 
   // The page drops its engines first; closing on top of live workers is what
   // leaves the tree behind.
   await page.evaluate(() => (globalThis).stopEngines?.()).catch(() => {});
   await browser.close().catch(() => {});
-  if (!root) return;
 
   for (let waited = 0; waited < 30000; waited += 250) {
-    if (!isAlive(root)) return;
+    if (!roots.some(isAlive)) return;
     await sleep(250);
   }
-  const stuck = tree(root);
+  const stuck = roots.flatMap(tree);
   for (const pid of stuck) {
     try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
   }
-  console.error(`killed ${stuck.length} leaked process(es) under pid ${root}`);
+  console.error(`killed ${stuck.length} leaked process(es) under ${roots.join(', ')}`);
 }
 
 const isAlive = (pid) => {
