@@ -463,3 +463,60 @@ Most pairs tie by construction, so a normal approximation over all pairs is
 generous. `score.mjs` prints a sign test over the decisive pairs alongside it,
 and they disagree: the intuition-only arm reads as -73 elo with a 95% interval
 excluding zero, and as 1 of 7 decisive pairs, p = 0.125.
+
+### What it found
+
+11x11, 48 paired two-move openings, 16 search threads, one second a move where a
+clock is involved.
+
+| arm | matchup | result |
+| --- | ------- | ------ |
+| intuition | fp16 vs fp32, one visit a move | -22 elo [-82, +37], 7 of 17 decisive pairs, p = 0.63 |
+| fixed time | fp16 vs fp32, 1s a move | **0 elo [-73, +73]**, 12 of 24 decisive pairs, p = 1.000 |
+| search | fp16 at 400 visits vs fp16 at 100 | +232 elo [178, 298], 59 of 62 decisive pairs, p = 0.000 |
+
+**Half precision is worth nothing measurable at a fixed time budget, and the net
+file is 53 MB instead of 105.** That is the whole result: choose fp16 for the
+download, not for the strength.
+
+The three arms agree. fp16 serves 117 evaluations a move against fp32's 99, so
+1.18x the work, which is 0.24 doublings. The search arm prices a doubling at 143
+elo (over evaluations; 125 over visits, which are inflated differently in the two
+arms). So fp16's speed is worth about **34 elo** -- real, but a quarter of what
+the fixed-time arm could resolve. Separating 34 elo from zero needs some ten
+hours of games, against the two hours these took.
+
+The search arm is also the positive control the other two need. The same
+harness, the same openings, the same scoring: when a real difference exists it
+comes out at 59 of 62 decisive pairs and p = 0.000 on 96 pairs. So the fixed-time
+null is a null, not a broken rig.
+
+### Two results that were wrong, and how they were caught
+
+An earlier fixed-time arm gave fp16 **+129 elo at p = 0.002** over 48 pairs. It
+did not replicate: rerun with the precisions swapped between the two engine
+instances, on an engine that had meanwhile got 1.5x faster, it came out at
+exactly 0. Both things changed at once and the cause cannot be separated. What
+flagged it was not the statistics -- p = 0.002 looked fine -- but that the effect
+disagreed with its own mechanism: 129 elo needs 0.78 doublings of search and fp16
+had 0.24. **An effect that does not match the size of its cause is worth
+distrusting however good its p-value.**
+
+The intuition arm first read -73 elo on 24 openings, 1 of 7 decisive pairs. On 48
+openings it reads -22 with 7 of 17. Both were the same null; the first was small
+numbers.
+
+Two measurement traps behind them, both worth avoiding:
+
+- **A leaked browser.** `browser.close()` leaves the page's process tree alive
+  when the page holds a wasm engine, and a leaked engine still holds a WebGPU
+  device. One config measured 56-65 visits/s early in a session and 22-25 late,
+  monotonically downhill, purely from the leaks piling up. See
+  `scripts/browser.mjs`, which also refuses to start while any headless chromium
+  is alive, since this machine is shared.
+- **Visits are not work.** A move can spend thousands of visits walking a subtree
+  the nnCache already holds, and none of those reach the GPU. Two byte-identical
+  engines came out at 220 and 141 visits/move in aggregate on that alone, with a
+  per-game median ratio of 1.01 and one game at 25.8x. Which arm gets the freak
+  games flips between runs. Evaluations per move is stable; visits per move is
+  not.
