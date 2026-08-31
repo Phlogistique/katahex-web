@@ -1,9 +1,9 @@
 // The KataGo net on raw WebGPU, written by hand because onnxruntime's
 // convolution leaves half the speed on the table (see README "Winograd,
 // measured"). Activations are [rows, channels] matrices: NHWC flattened, with
-// channels padded to a multiple of 16 (the matmul's K tile) and rows to 64 (its
-// M tile). Every kernel writes zeros into the channel padding, so a padded
-// column entering a matmul contributes nothing; padded rows can hold garbage,
+// channels padded to a multiple of 16 and rows to the row tile of the matmul
+// that reads them. Every kernel writes zeros into the channel padding, so a
+// padded column entering a matmul contributes nothing; padded rows hold garbage,
 // which stays in padded rows because every op either preserves rows or reduces
 // over the real positions of one image.
 //
@@ -28,6 +28,7 @@ import type { ParsedKataGoModelV8, ParsedTrunkBlock } from '../vendor/modelV8';
 const TILE = 64;
 
 const roundUp = (v: number, m: number) => Math.ceil(v / m) * m;
+/** Channels pad to the narrowest k tile any matmul pipeline stages. */
 const padC = (c: number) => roundUp(c, 16);
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,7 @@ export type MatmulTile = { wgX: number; wgY: number; rows: number; cols4: number
 const WIDE: Omit<MatmulTile, 'tileK'> = { wgX: 16, wgY: 16, rows: 4, cols4: 1 };
 /** Half the rows, for an m that a 64-row tile would pad heavily. */
 const NARROW: Omit<MatmulTile, 'tileK'> = { wgX: 16, wgY: 8, rows: 4, cols4: 1 };
+const NARROW_ROWS = NARROW.wgY * NARROW.rows;
 
 /**
  * The pipeline shape for a given matmul. A wider k tile halves the barriers but
@@ -83,13 +85,13 @@ export function matmulTile(m: number, n: number, k: number): MatmulTile {
  * Tiled matmul, C[m,n] = A[m,k] B[k,n], batched over workgroup z when
  * dispatched with depth > 1 (the Winograd tile positions). Everything moves in
  * vec4: four columns of B and four steps of the reduction of A per load, so the
- * inner loop issues a quarter of the shared-memory reads a scalar one would and
- * every lane reads a whole 8-byte bank. m must be a multiple of the tile's row
- * count and k of its k tile; n only has to be a multiple of 16, at the price of
- * a guarded store (`colGuard`) when it is not a multiple of 64.
+ * inner loop issues a quarter of the shared-memory reads a scalar one would.
+ * m must be a multiple of the tile's row count and k of its k tile; n only has
+ * to be a multiple of 16, at the price of a guarded store when it is not a
+ * multiple of 64.
  *
- * The reduction is emitted fully unrolled so the accumulators stay in registers:
- * a dynamically indexed array of them spills to scratch memory.
+ * The reduction is emitted fully unrolled, so every accumulator is a named
+ * variable the compiler can hold in a register.
  */
 export function matmulShader(t: string, m: number, n: number, k: number,
                              tile: MatmulTile = matmulTile(m, n, k)): string {
@@ -103,7 +105,7 @@ export function matmulShader(t: string, m: number, n: number, k: number,
       aCount % threads || bCount % threads) throw new Error(`matmul ${m}x${n}x${k} does not tile`);
 
   const v4 = `vec4<${t}>`;
-  const list = <T,>(count: number, f: (i: number) => T) => Array.from({ length: count }, (_, i) => f(i));
+  const list = <T>(count: number, f: (i: number) => T) => Array.from({ length: count }, (_, i) => f(i));
   const acc = (i: number, p: number) => `acc${i}_${p}`;
   const stage = (name: string, count: number, expr: string) =>
     list(count / threads, (s) => `    { let idx = tid + ${s * threads}u; ${name}[idx] = ${expr}; }`);
@@ -590,7 +592,10 @@ export class KataGoWebGpuModel {
     const rowsPad = roundUp(rows, TILE);
     const tiles = Math.ceil(size / 4) ** 2;
     const wRows = batch * tiles;
-    const wRowsPad = roundUp(wRows, TILE);
+    // The Winograd matmul's rows are board tiles, 9 of them per image on 11x11,
+    // so a 64-row tile is nearly all padding at the batch sizes a search runs
+    // at. Pad to the narrow tile, which matmulTile then picks.
+    const wRowsPad = roundUp(wRows, NARROW_ROWS);
     const nPad = roundUp(batch, TILE);
 
     const passes: Pass[] = [];
