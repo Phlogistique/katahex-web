@@ -91,7 +91,9 @@ export function matmulTile(m: number, n: number, k: number): MatmulTile {
  * multiple of 64.
  *
  * The reduction is emitted fully unrolled, so every accumulator is a named
- * variable the compiler can hold in a register.
+ * variable the compiler can hold in a register. They are declared at function
+ * scope, which they have to be to survive the k loop; keep them there, since
+ * this driver does not re-initialize a var declared inside a loop.
  */
 export function matmulShader(t: string, m: number, n: number, k: number,
                              tile: MatmulTile = matmulTile(m, n, k)): string {
@@ -101,8 +103,12 @@ export function matmulShader(t: string, m: number, n: number, k: number,
   const kq = tileK / 4;        // vec4s of the reduction staged per step
   const n4 = n / 4, k4 = k / 4;
   const aCount = tileM * kq, bCount = tileK * nq;
+  // 16384 is the workgroup storage every WebGPU device is guaranteed to have;
+  // the fp32 64x64 k32 tile sits exactly on it.
   if (m % tileM || k % tileK || n % 16 || nq * 4 !== TILE ||
-      aCount % threads || bCount % threads) throw new Error(`matmul ${m}x${n}x${k} does not tile`);
+      aCount % threads || bCount % threads ||
+      (aCount + bCount) * 4 * (t === 'f16' ? 2 : 4) > 16384)
+    throw new Error(`matmul ${m}x${n}x${k} does not tile`);
 
   const v4 = `vec4<${t}>`;
   const list = <T>(count: number, f: (i: number) => T) => Array.from({ length: count }, (_, i) => f(i));
@@ -139,8 +145,6 @@ fn main(@builtin(local_invocation_id) lid : vec3<u32>,
   let cOff = wid.z * ${m * n4}u + (wid.y * ${tileM}u + lid.y * ${rows}u) * ${n4}u + colq;
   let aRead = lid.y * ${rows * kq}u;
   let bRead = lid.x * ${cols4}u;
-  // Explicitly zeroed: this driver does not re-initialize a var per iteration,
-  // and these have to survive the k loop anyway.
 ${list(rows, (i) => list(cols4, (p) => `  var ${acc(i, p)} = ${v4}();`).join('')).join('\n')}
 
   for (var kb = 0u; kb < ${k4}u; kb += ${kq}u) {
