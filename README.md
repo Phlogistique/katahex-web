@@ -76,7 +76,9 @@ The net needs 6.33 GFLOP per evaluation, 90% of it in the 62 3x3 convolutions of
 the trunk. At 52 evaluations a second onnxruntime is getting 329 GFLOP/s out of
 this GPU, a third of what the hand-written kernel above reaches in the same
 browser. Feed the net through a kernel that good and it would run at about 150
-evaluations a second, past native's 128.
+evaluations a second, past native's 128 -- and that still holds onnxruntime's
+direct convolution fixed; the hand-written backend puts Winograd on top of the
+tuned kernel and measures 224 below.
 
 So the gap is onnxruntime's convolution, not WebGPU. Two things it lacks:
 

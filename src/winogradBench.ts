@@ -38,7 +38,7 @@ function gemmM(c: Conv): { real: number; padded: number } {
 // ---------------------------------------------------------------------------
 // Shaders
 
-/** The same tiled matmul as microbench.ts, batched over GROUPS along z. */
+/** The scalar tiled matmul the numbers below were taken with, batched over GROUPS along z. */
 function matmulShader(half: boolean, m: number, n: number, k: number): string {
   const t = half ? 'f16' : 'f32';
   return `${half ? 'enable f16;\n' : ''}

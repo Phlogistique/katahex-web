@@ -12,6 +12,9 @@
 // slices alternate between the tabs, each pair alternates its order, every
 // slice records the clock band it ran in, and a pair whose two bands disagree
 // by more than 15% is thrown out.
+//
+// Run on a clean tree this is an A/A: both sides are HEAD, so what it prints is
+// the harness's own floor.
 
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
