@@ -19,8 +19,8 @@ type Shape = { m: number; n: number; k: number; z: number; label: string };
 const SHAPES: Shape[] = [
   { m: 448, n: 192, k: 192, z: 36, label: 'wino trunk, batch 48' },
   { m: 5824, n: 192, k: 384, z: 1, label: '1x1 trunk, batch 48' },
-  { m: 64, n: 192, k: 192, z: 36, label: 'wino trunk, batch 1' },
-  { m: 32, n: 192, k: 192, z: 36, label: 'wino trunk, batch 1, half the padding' },
+  { m: 32, n: 192, k: 192, z: 36, label: 'wino trunk, batch 1' },
+  { m: 64, n: 192, k: 192, z: 36, label: 'wino trunk, batch 1, padded to 64 rows' },
   { m: 2048, n: 2048, k: 2048, z: 1, label: 'square 2048' },
 ];
 
@@ -44,7 +44,20 @@ function pipeline(device: GPUDevice, half: boolean, s: Shape, tile: MatmulTile):
   });
 }
 
-/** All-ones inputs, where every output must equal K. Guarded columns included. */
+// Every input depends on all of its indices, so a swapped k lane or a wrong
+// column stride moves the answer -- which all-ones inputs would not. The values
+// are small integers whose products sum exactly in fp16 over these k.
+const aAt = (z: number, r: number, k: number) => ((r + 2 * k + z) % 5) - 2;
+const bAt = (z: number, k: number, c: number) => ((k + 3 * c + 2 * z) % 3) - 1;
+
+/** 1.0-scale integers only: no rounding, no subnormals. */
+const toF16 = (v: number) => {
+  if (v === 0) return 0;
+  const u = new Uint32Array(new Float32Array([v]).buffer)[0];
+  return ((u >>> 16) & 0x8000) | ((((u >>> 23) & 0xff) - 112) << 10) | ((u >>> 13) & 0x3ff);
+};
+
+/** The tile against a CPU reference, on a shape whose columns exercise the guard. */
 async function verify(device: GPUDevice, half: boolean, tile: MatmulTile) {
   const s: Shape = { m: 2 * tile.wgY * tile.rows, n: 80, k: 96, z: 2, label: 'check' };
   const width = half ? 2 : 4;
@@ -53,11 +66,21 @@ async function verify(device: GPUDevice, half: boolean, tile: MatmulTile) {
     size: count * width,
     usage: GPUBufferUsage.STORAGE | (i < 2 ? GPUBufferUsage.COPY_DST : GPUBufferUsage.COPY_SRC),
   }));
-  for (const i of [0, 1]) {
-    device.queue.writeBuffer(buffers[i], 0, half
-      ? new Uint16Array(counts[i]).fill(0x3c00)   // 1.0 as float16
-      : new Float32Array(counts[i]).fill(1));
-  }
+  const fill = (count: number, at: (i: number) => number) => {
+    const values = Array.from({ length: count }, (_, i) => at(i));
+    return half ? new Uint16Array(values.map(toF16)) : new Float32Array(values);
+  };
+  device.queue.writeBuffer(buffers[0], 0, fill(counts[0],
+    (i) => aAt(Math.floor(i / (s.m * s.k)), Math.floor(i / s.k) % s.m, i % s.k)));
+  device.queue.writeBuffer(buffers[1], 0, fill(counts[1],
+    (i) => bAt(Math.floor(i / (s.k * s.n)), Math.floor(i / s.n) % s.k, i % s.n)));
+
+  const want = Array.from({ length: counts[2] }, (_, i) => {
+    const z = Math.floor(i / (s.m * s.n)), r = Math.floor(i / s.n) % s.m, c = i % s.n;
+    let sum = 0;
+    for (let k = 0; k < s.k; k++) sum += aAt(z, r, k) * bAt(z, k, c);
+    return sum;
+  });
 
   const p = pipeline(device, half, s, tile);
   const encoder = device.createCommandEncoder();
@@ -83,7 +106,7 @@ async function verify(device: GPUDevice, half: boolean, tile: MatmulTile) {
         return (h >> 15 ? -1 : 1) * (exponent ? 2 ** (exponent - 15) * (1 + mantissa / 1024) : 0);
       })
     : Array.from(new Float32Array(raw));
-  const wrong = values.filter((v) => v !== s.k).length;
+  const wrong = values.filter((v, i) => v !== want[i]).length;
   for (const buffer of [...buffers, readback]) buffer.destroy();
   return wrong;
 }
@@ -104,10 +127,11 @@ async function run() {
     for (const f of half ? [false, true] : [false]) {
       for (const { label, tile } of TILES) {
         const wrong = await verify(device, f, tile);
-        if (wrong) log(`  ${label} ${f ? 'fp16' : 'fp32'}: ${wrong} wrong outputs`);
+        // A wrong kernel must not be timed: its number would be quoted.
+        if (wrong) throw new Error(`${label} ${f ? 'fp16' : 'fp32'}: ${wrong} wrong outputs`);
       }
     }
-    log('all tiles check out on all-ones inputs');
+    log('every tile matches the CPU reference');
 
     // One set of buffers and pipelines per shape, built before anything is timed.
     const usage = GPUBufferUsage.STORAGE;
