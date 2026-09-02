@@ -32,6 +32,20 @@ const NUM_ANALYSIS_THREADS = 2;
 const post = (message: FromEngine) => self.postMessage(message);
 
 /**
+ * The message goes on the page, where 120 characters of it are read by someone
+ * who cannot open a console; the stack goes to the log, where it is minified
+ * and only useful next to a source map.
+ */
+const fail = (error: unknown) => {
+  const stack = (error as Error)?.stack;
+  if (stack) post({ kind: 'log', line: stack });
+  post({ kind: 'error', message: String((error as Error)?.message ?? error) });
+};
+
+/** Its UA is the only one with a real `Gecko/<date>`; Chrome's says "like Gecko". */
+const FIREFOX = /Gecko\/\d/.test(navigator.userAgent);
+
+/**
  * Reads the body a piece at a time so the wait can be reported: this is 49 MB,
  * and on a phone it is most of the time between opening the page and a first
  * move being analysed.
@@ -112,7 +126,11 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   const say = (text: string) => post({ kind: 'progress', text });
 
   say('looking for a GPU');
-  if (!navigator.gpu) throw new Error('this browser has no WebGPU');
+  // Firefox ships WebGPU on Linux, but off: there is nothing the page can do
+  // about that except say which switch, because nobody guesses `about:config`.
+  if (!navigator.gpu) throw new Error(FIREFOX
+    ? 'Firefox keeps WebGPU behind a switch: set dom.webgpu.enabled in about:config'
+    : 'this browser has no WebGPU');
   const gpu = await navigator.gpu.requestAdapter();
   if (!gpu) throw new Error('WebGPU found no adapter to run on');
 
@@ -175,7 +193,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   } });
   for (let idx = 0; idx < serverThreads; idx++) {
     void serveEvals(module.wasmMemory, module._katahexControlBlockAddress(idx), model, { stats, onEval })
-      .catch((error) => post({ kind: 'error', message: String(error?.stack ?? error) }));
+      .catch(fail);
   }
 
   // Returns at once: main() is on a thread of its own.
@@ -190,7 +208,7 @@ self.onmessage = (event: MessageEvent<ToEngine>) => {
   const message = event.data;
 
   if (message.kind === 'start') {
-    start(message).catch((error) => post({ kind: 'error', message: String(error?.stack ?? error) }));
+    start(message).catch(fail);
     return;
   }
 

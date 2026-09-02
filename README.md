@@ -310,6 +310,15 @@ Also worth knowing: the model download arrives *already inflated*, because serve
 set `Content-Encoding: gzip` on a `.gz`. Sniff the magic bytes rather than
 trusting the name.
 
+### Browsers
+
+Chromium runs it. Firefox does too, but not as shipped: WebGPU is off by default
+on Linux and a page cannot ask for it, so the worker says which switch when
+`navigator.gpu` is missing rather than reporting a minified stack. Set
+`dom.webgpu.enabled` in `about:config` and Firefox 154 has `shader-f16` in a
+worker and runs the page end to end, at about half the throughput: 118 net
+positions a second against Chromium's 236, same machine and same search.
+
 ### The two weight files
 
 The page is not served `hex27x3.bin.gz`. `scripts/export_net.py` writes what its
