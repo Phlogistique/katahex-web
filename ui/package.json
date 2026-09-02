@@ -1,0 +1,36 @@
+{
+  "name": "katahex-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@overlastic/vue": "^0.8.10",
+    "@vueuse/core": "^14.4.0",
+    "bootstrap": "^5.3.3",
+    "events": "^3.3.0",
+    "expr-eval-fork": "^3.0.3",
+    "i18next": "^26.4.0",
+    "pixi.js": "^8.18.1",
+    "seedrandom": "^3.0.5",
+    "tiny-typed-emitter": "^2.1.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@iconify-json/bi": "^1.2.0",
+    "@iconify-json/fa": "^1.2.0",
+    "@types/node": "^26.4.0",
+    "@types/seedrandom": "^3.0.8",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "playwright": "^1.62.1",
+    "stylus": "^0.64.0",
+    "typescript": "~5.7",
+    "unplugin-icons": "^0.22.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.0.0",
+    "vue-tsc": "^2.2.12"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+    "types": ["node", "unplugin-icons/types/vue"],
+    "lib": ["ES2022", "DOM"],
+
+    // The vendored code is PlayHex's, so it is checked with PlayHex's own settings.
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "strictNullChecks": true,
+    "strictPropertyInitialization": false,
+    "useUnknownInCatchVariables": false,
+
+    "paths": {
+      "@playhex/pixi-board": ["./src/shared/pixi-board/index.ts"],
+      "vue-router": ["./src/stubs/vue-router.ts"],
+      "@unhead/vue": ["./src/stubs/unhead.ts"],
+      // The engine bridge and the WebGPU net, which are checked by their own project.
+      "@engine/*": ["../../katahex-web/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "src/**/*.d.ts", "vite.config.ts"],
+  "exclude": ["**/test/**"]
+}

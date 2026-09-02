@@ -1,0 +1,29 @@
+html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    touch-action: manipulation;
+}
+
+/*
+ * Hexplorer sizes itself under PlayHex's 3rem site header, which this app does not have.
+ * The #app prefix outweighs the scoped rule it replaces.
+ */
+#app .layout {
+    height: 100dvh;
+}
+
+/* At the top, and click-through: everything the app is driven with is at the bottom. */
+#engine-status {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+    margin: 0;
+    pointer-events: none;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8rem;
+    background: var(--bs-warning-bg-subtle);
+    color: var(--bs-warning-text-emphasis);
+    text-align: center;
+}

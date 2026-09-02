@@ -8,3 +8,10 @@ a TensorFlow.js graph from it. KataHex's `hex27x3.bin.gz` is a version 11
 `binModelParser.ts` is modified: `readBinaryFloats` also accepts a float16 array
 under an `@BINF16@` marker, which is what `scripts/export_net.py` writes and what
 the page downloads. Nothing else in these files knows the difference.
+
+`public-web/coi-serviceworker.js` is coi-serviceworker v0.1.7
+(https://github.com/gzuidhof/coi-serviceworker), MIT licensed, copied verbatim.
+GitHub Pages serves no response headers of its own, so the page cannot be sent
+`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`; this registers a
+service worker that adds them to every response and reloads the page once, which
+is what makes `SharedArrayBuffer` -- and so the engine's threads -- exist.

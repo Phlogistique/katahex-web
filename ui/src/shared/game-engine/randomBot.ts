@@ -1,0 +1,57 @@
+import seedrandom from 'seedrandom';
+import { Game } from '../game-engine/index.js';
+import { coordsToMove } from '../move-notation/move-notation.js';
+import type { HexMove } from '../move-notation/hex-move-notation.js';
+
+/**
+ * Returns a random number in [0;1[
+ * if determinist, return always same number for a given game position.
+ */
+const rand = (game: Game, determinist: boolean): number => {
+    const rng = determinist
+        ? seedrandom(game
+            .getMovesHistory()
+            .map(timestampedMove => timestampedMove.move)
+            .join(' '),
+        )
+        : seedrandom()
+    ;
+
+    return rng();
+};
+
+/**
+ * Returns a random move to play on a given game.
+ *
+ * @param waitBeforePlay Time to wait in millisecond before return move. 0 to test concurrence, higher value to see coming.
+ * @param determinist If random moves should be determinist. Bot will respond same as long as you play same moves.
+ */
+export const calcRandomMove = async (game: Game, waitBeforePlay = 0, determinist = false): Promise<HexMove> => {
+
+    if (waitBeforePlay > 0) {
+        await new Promise(resolve => {
+            setTimeout(resolve, waitBeforePlay);
+        });
+    }
+
+    // Swaps 30% times
+    if (game.canSwapNow() && rand(game, determinist) < 0.3) {
+        return 'swap-pieces';
+    }
+
+    const possibleMoves: HexMove[] = [];
+
+    for (let row = 0; row < game.getSize(); ++row) {
+        for (let col = 0; col < game.getSize(); ++col) {
+            if (game.getBoard().isEmpty(coordsToMove({ row, col }))) {
+                possibleMoves.push(coordsToMove({ row, col }));
+            }
+        }
+    }
+
+    if (possibleMoves.length === 0) {
+        throw new Error('Cannot play a random move, no possible move');
+    }
+
+    return possibleMoves[Math.floor(rand(game, determinist) * possibleMoves.length)];
+};
