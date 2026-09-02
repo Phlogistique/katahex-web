@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:web": "vite build --mode web && mv dist-web/web.html dist-web/index.html",
     "dev": "vite",
     "typecheck": "vue-tsc --noEmit"
   },

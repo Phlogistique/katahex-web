@@ -1,8 +1,9 @@
 #!/bin/sh
 # Cross-compile the KataHex engine to WebAssembly.
 #
-# Needs emsdk (https://github.com/emscripten-core/emsdk) sourced, and a katahex
-# checkout on a branch carrying the Emscripten cmake fixes and the JS backend.
+# Needs emsdk (https://github.com/emscripten-core/emsdk) sourced. The engine is
+# the fork under engine/, which carries the Emscripten cmake fixes and the JS
+# backend; KATAHEX points it at a checkout of your own instead.
 #
 #   BACKEND=JS     the net is evaluated from JavaScript (see src/netRunner.ts)
 #   BACKEND=EIGEN  the net is evaluated on the wasm CPU, for comparison; also
@@ -13,12 +14,12 @@
 set -eu
 
 : "${EMSDK:?source emsdk_env.sh first}"
-ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-KATAHEX=${KATAHEX:-$ROOT/katahex}
-EIGEN=${EIGEN:-$ROOT/third_party/eigen-prefix}
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+KATAHEX=${KATAHEX:-$ROOT/engine}
+EIGEN=${EIGEN:-$ROOT/../third_party/eigen-prefix}
 BACKEND=${BACKEND:-JS}
 TARGET=${TARGET:-web}
-BUILD=${BUILD:-$ROOT/build-wasm-$(echo "$BACKEND-$TARGET" | tr '[:upper:]' '[:lower:]')}
+BUILD=${BUILD:-$ROOT/build/wasm-$(echo "$BACKEND-$TARGET" | tr '[:upper:]' '[:lower:]')}
 SYSROOT=$EMSDK/upstream/emscripten/cache/sysroot
 
 # NODERAWFS puts the engine on the real file descriptors. A page has none, so it
@@ -66,3 +67,10 @@ emcmake cmake -S "$KATAHEX/cpp" -B "$BUILD" \
     $ENVFLAGS"
 
 cmake --build "$BUILD" -j"$(nproc)"
+
+# The page's engine is served from public-web/, which is what the site is built
+# from, so stage it there rather than leaving it in the build directory.
+if [ "$BACKEND" = JS ] && [ "$TARGET" = web ]; then
+  cp "$BUILD/katahex.js" "$BUILD/katahex.wasm" "$ROOT/public-web/"
+  echo "staged katahex.js and katahex.wasm in public-web/"
+fi

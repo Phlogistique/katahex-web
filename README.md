@@ -2,7 +2,13 @@
 
 Running the KataHex engine as a web page: KataHex's C++ board, input features and
 search compiled to WebAssembly, with the neural net evaluated on the GPU through
-WebGPU.
+WebGPU. Nothing is sent anywhere; the search runs in the tab.
+
+**https://phlogistique.github.io/katahex-web/** -- needs a browser with WebGPU.
+
+Licences are in `NOTICE.md`: the site is AGPL-3.0-only because the ui is
+PlayHex's, the engine stays MIT, and the net is HZY's, redistributed with his
+permission.
 
 `hex27x3.bin.gz` is a KataGo v11 `b18c384nbt` net -- 18 nested-bottleneck blocks,
 384 channels, 26.4M parameters -- in KataGo's own weight format. Nothing in the file
@@ -270,23 +276,24 @@ against all-ones inputs before timing.
 
 ## The page
 
-`katahex-android/ui` is the hexplorer, vendored from PlayHex for the Android app.
-It reaches its engine through a small bridge on `window` -- `Native.start(size)`,
-`Native.query(json)`, and the engine's two output streams back as
-`onEngineLine` and `onEngineLog` -- which the app implements in Java over a child
-process. `src/wasmEngine.ts` implements the same bridge with the engine compiled
-to WebAssembly, so the same ui becomes a page that needs no server:
+`ui/` is the hexplorer, vendored from PlayHex. It reaches its engine through a
+small bridge on `window` -- `Native.start(size)`, `Native.query(json)`, and the
+engine's two output streams back as `onEngineLine` and `onEngineLog` -- which the
+Android app implements in Java over a child process. `src/wasmEngine.ts`
+implements the same bridge with the engine compiled to WebAssembly, so the same
+ui becomes a page that needs no server:
 
-    cd ../katahex-android/ui
-    ln -s ../../../build-wasm-js-web/katahex.js public/katahex.js
-    ln -s ../../../build-wasm-js-web/katahex.wasm public/katahex.wasm
-    ln -s ../../../hex27x3.bin.gz public/hex27x3.bin.gz
-    npx vite --mode web        # then open /web.html
+    npm --prefix ui install
+    npm --prefix ui run dev -- --mode web       # then open /web.html
 
 `src/engineWorker.ts` is the whole page-side engine: one worker holding the wasm
 engine, the net on WebGPU, and `src/netRunner.ts` between them. It takes about ten
-seconds to start, nearly all of it the 97 MB net. `?fp32` runs the net in single
+seconds to start, nearly all of it the net. `?fp32` runs the net in single
 precision.
+
+`--mode web` is not optional: without it vite serves no public directory, and
+`/katahex.js` comes back as the index page with a 200, which looks like an engine
+that never appears and reports nothing anywhere.
 
 Two things had to change for a page, both because a browser's main thread is not
 optional:
@@ -302,6 +309,57 @@ optional:
 Also worth knowing: the model download arrives *already inflated*, because servers
 set `Content-Encoding: gzip` on a `.gz`. Sniff the magic bytes rather than
 trusting the name.
+
+### The two weight files
+
+The page is not served `hex27x3.bin.gz`. `scripts/export_net.py` writes what its
+two readers each need, into `public-web/`:
+
+    net-fp16.bin.gz    49 MB   convolution and matmul weights as float16
+    net-shape.bin.gz  100 KB   the same file with every float array zeroed
+
+Both are still KataGo weight files -- the half precision arrays sit under an
+`@BINF16@` marker, which `vendor/binModelParser.ts` reads and `desc.cpp` never
+sees -- so the engine loads the second one unchanged. It only ever reads the
+name, the version and the channel counts: the JS backend evaluates nothing, so
+the weights it parses are dead the moment they are parsed.
+
+The half precision file is not an approximation of what the page used to run.
+The WebGPU backend converts every weight to float16 on its way to the buffer, so
+for the arrays it uploads unchanged the exported bits are the bits it would have
+computed -- `npm run check:export` pins exactly that, which needs `export_net.py`
+to round the way `toHalf` does, by truncating. Two exceptions, both deliberate:
+batch norm statistics stay float32, because the GPU stores the batch norm folded
+into a scale and a bias and rounding the inputs of that division would be a
+second, avoidable loss; and 3x3 kernels are Winograd transformed before they are
+rounded, so those outputs do move. `check.html` measures that -- mean policy
+logit error over the 512-position bank goes from 0.0457 to 0.0460, against a
+frozen limit of 0.065.
+
+### Publishing
+
+`public-web/` is the whole site apart from the ui bundle: the engine, the two
+weight files, and coi-serviceworker. The rest of `public/` is a few hundred
+megabytes the benchmark and the gate use, and is not served.
+
+A static host sends no `Cross-Origin-Opener-Policy` or
+`Cross-Origin-Embedder-Policy`, and without them there is no `SharedArrayBuffer`
+and so no engine threads. coi-serviceworker registers a service worker that adds
+the headers to every response and reloads the page once. `ui/src/web.ts` starts
+nothing while `crossOriginIsolated` is false, so that first load does not pull
+49 MB of net to have the reload throw it away.
+
+Asset urls are relative and the engine and net paths resolve against
+`document.baseURI`, so a build serves from a project page's subpath as happily as
+from a root.
+
+`.github/workflows/pages.yml` builds the ui and deploys on a push to `main`. The
+engine and the nets are committed, because building them needs emsdk and a 97 MB
+file that is not in this repository:
+
+    scripts/build-engine.sh                                    # needs emsdk sourced
+    uv run --with numpy python scripts/export_net.py \
+      path/to/hex27x3.bin.gz public-web/net
 
 ### Search speed, 11x11 on the Iris Xe laptop
 
@@ -413,9 +471,12 @@ read low.
 
 ## Engine
 
-`scripts/build-engine.sh` cross-compiles the KataHex engine to WebAssembly. It
-needs a katahex checkout on the `wasm-build` branch, which carries the cmake
-fixes for targeting Emscripten and the JS backend below. 1.6 MB of wasm.
+`engine/` is the KataHex fork, carrying the cmake fixes for targeting Emscripten
+and the JS backend below; it is a git subtree, squashed, of
+https://github.com/selinger/katahex.
+
+`scripts/build-engine.sh` cross-compiles it to WebAssembly and stages the result
+in `public-web/`. 1.6 MB of wasm.
 
 `BACKEND=EIGEN` builds the engine with the net on the wasm CPU. It works and
 answers analysis queries, at roughly a third of the speed of the same engine
