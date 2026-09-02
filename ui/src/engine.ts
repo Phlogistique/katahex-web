@@ -76,6 +76,15 @@ class Engine {
         return !!window.Native;
     }
 
+    /**
+     * Visits reported since the page loaded, over every search. Monotonic, and
+     * sampled rather than watched: engineSpeed.ts turns it into a rate.
+     */
+    totalVisits = 0;
+
+    /** Where the live search's count had got to, since it reports as it grows. */
+    private liveVisits = 0;
+
     private size = 0;
     private ready = false;
     private seq = 0;
@@ -129,6 +138,7 @@ class Engine {
         });
 
         this.live = { id, json, report, owner };
+        this.liveVisits = 0;
         this.send(json);
     }
 
@@ -228,6 +238,13 @@ class Engine {
         if (this.live && reply.id === this.live.id) {
             // A terminated search that had not visited anything reports no results at all.
             if (reply.rootInfo) {
+                // A live search reports the same id over and over as it grows, so
+                // only what it has added since the last report is new. It counts
+                // from zero again if the search is restarted.
+                const grown = reply.rootInfo.visits;
+                this.totalVisits += grown >= this.liveVisits ? grown - this.liveVisits : grown;
+                this.liveVisits = grown;
+
                 this.live.report(this.toAnalysis(reply));
             }
             return;
@@ -246,6 +263,8 @@ class Engine {
             return;
         }
 
+        // A bounded search answers once, with everything it did.
+        this.totalVisits += reply.rootInfo.visits;
         request.resolve(this.toAnalysis(reply));
     }
 

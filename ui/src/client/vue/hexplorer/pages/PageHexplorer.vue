@@ -47,6 +47,7 @@ import ImportFormatsHelpOverlay from '../overlays/ImportFormatsHelpOverlay.vue';
 import { PlaceMarkTool } from '../tools/PlaceMarkTool.js';
 import { analyzers, defaultAnalyzer } from '../../../../analyzers.js'; // katahex-android: on-device engines
 import LiveAnalysisButton from '../components/LiveAnalysisButton.vue';
+import { searching, speed } from '../../../../engineSpeed.js';
 
 useHead({
     title: t('hexplorer.title'),
@@ -472,6 +473,12 @@ const onAnalysisFileSelected = async (event: Event) => {
                     </select>
                 </div>
 
+                <p v-if="speed" class="speed text-body-secondary mb-2" :class="{ stale: !searching }">
+                    {{ Math.round(speed.visits) }} visits/s<template v-if="speed.netEvals !== null">,
+                    net {{ Math.round(speed.netEvals) }} evals/s<template v-if="speed.batch !== null">
+                    at batch {{ Math.round(speed.batch) }}</template></template>
+                </p>
+
                 <EvaluationGraph
                     :evalHistory
                     :cursorIndex="evalCursorIndex"
@@ -690,6 +697,13 @@ sidebarOpen()
     flex 1 1 auto
     min-height 0
     width 100%
+
+.speed
+    font-size 0.75rem
+    font-variant-numeric tabular-nums
+
+    &.stale
+        opacity 0.5
 
 .credits
     font-size 0.7rem

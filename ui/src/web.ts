@@ -3,6 +3,7 @@
 // phone -- it answers on the same `window.Native` bridge, so nothing else differs.
 
 import { installWasmEngine } from '@engine/wasmEngine';
+import { noteNetStats } from './engineSpeed.js';
 
 // ?fp32 runs the net in single precision, the reference the half-precision
 // numbers are checked against; ?threads=N searches with N threads a position;
@@ -41,8 +42,12 @@ if (!crossOriginIsolated) {
         serverThreads: Number(options.get('servers')) || undefined,
         leafEvals: Number(options.get('leaves')) || undefined,
         profile: options.has('profile'),
-        // Cumulative net counters, readable from the console or a benchmark harness.
-        onStats: (stats) => Object.assign(window, { engineStats: stats }),
+        // Cumulative net counters: the sidebar's speed readout, and readable from
+        // the console or a benchmark harness.
+        onStats: (stats) => {
+            noteNetStats(stats);
+            Object.assign(window, { engineStats: stats });
+        },
     });
 
     await import('./main.js');
