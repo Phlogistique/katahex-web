@@ -23,9 +23,16 @@ const status = (text: string) => {
 // lands, starting anything means downloading 49 MB of net to throw away.
 if (!crossOriginIsolated) {
     status('Setting up cross-origin isolation, this reloads once...');
-    setTimeout(() => status(
-        'This page needs cross-origin isolation and did not get it. It has to be ' +
-        'served over https, with service workers allowed.'), 5000);
+    // The reload should have happened long before this fires. A phone has no
+    // console to say why it did not, so put what decides it on the page.
+    setTimeout(async () => {
+        const worker = navigator.serviceWorker;
+        const registered = worker ? (await worker.getRegistrations()).length : 0;
+        status('This page needs cross-origin isolation and did not get it. Reloading may ' +
+            `fix it. https ${isSecureContext}, service workers ${!!worker}, ` +
+            `registered ${registered}, controlling ${!!worker?.controller}, ` +
+            `SharedArrayBuffer ${typeof SharedArrayBuffer !== 'undefined'}.`);
+    }, 10000);
 } else {
     installWasmEngine({
         half: !options.has('fp32'),

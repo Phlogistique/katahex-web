@@ -6,6 +6,12 @@
 <title>KataHex</title>
 </head>
 <body>
+  <!-- Every resource this page loads is same-origin, so the worker can set plain
+       require-corp. Its default is COEP credentialless plus a path that degrades
+       to require-corp by posting the worker a message and reloading at once; if
+       the reload beats the message the second load is credentialless again, and
+       the script has already recorded that it degraded, so it never retries. -->
+  <script>window.coi = { coepCredentialless: () => false };</script>
   <script src="/coi-serviceworker.js"></script>
   <div id="app"></div>
   <p id="engine-status" hidden></p>
