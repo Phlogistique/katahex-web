@@ -21,6 +21,7 @@ declare global {
         Native?: Native;
         onEngineLine?: (line: string) => void;
         onEngineLog?: (line: string) => void;
+        onEngineProgress?: (line: string) => void;
     }
 }
 
@@ -84,6 +85,9 @@ class Engine {
     constructor() {
         window.onEngineLine = line => this.receive(line);
         window.onEngineLog = line => this.log(line);
+        // The engine in the page spends about ten seconds downloading its net and
+        // handing it to the GPU, and says nothing on its own until it is up.
+        window.onEngineProgress = line => { if (!this.ready) this.onStatus(line, false); };
     }
 
     /**

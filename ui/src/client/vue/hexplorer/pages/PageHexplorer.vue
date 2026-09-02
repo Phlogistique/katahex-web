@@ -545,6 +545,12 @@ const onAnalysisFileSelected = async (event: Event) => {
             </div>
 
             <div class="sidebar-footer p-2">
+                <p class="credits text-body-secondary text-center">
+                    <a href="https://github.com/Phlogistique/katahex-web" target="_blank" rel="noopener">Source</a>, AGPL-3.0.
+                    Board and analysis ui from <a href="https://github.com/playhex/playhex" target="_blank" rel="noopener">PlayHex</a>,
+                    engine <a href="https://github.com/selinger/katahex" target="_blank" rel="noopener">KataHex</a>,
+                    net by <a href="https://github.com/hzyhhzy" target="_blank" rel="noopener">HZY</a>.
+                </p>
                 <button
                     type="button"
                     class="btn btn-outline-secondary btn-sm w-100 d-flex align-items-center justify-content-center gap-2"
@@ -684,6 +690,11 @@ sidebarOpen()
     flex 1 1 auto
     min-height 0
     width 100%
+
+.credits
+    font-size 0.7rem
+    line-height 1.25
+    margin-bottom 0.5rem
 
 .sidebar-footer
     flex-shrink 0

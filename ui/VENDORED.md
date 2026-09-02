@@ -64,3 +64,8 @@ from the ancestors it is also asked about.
   the phone gpu a lone evaluation costs about a second and twenty at once cost 25ms each, so
   reviewing a whole line is only bearable batched.
 - The `PlayingGameFacade`s are built with the last move marked, which hexplorer turns off.
+
+`PageHexplorer.vue` also carries a credits line in the sidebar footer, naming
+where the ui, the engine and the net come from and linking the source. The AGPL
+asks for the source of a work served over the network to be reachable, and this
+is where it is reachable from.

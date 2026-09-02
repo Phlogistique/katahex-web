@@ -17,6 +17,8 @@ type Host = {
   Native?: NativeBridge;
   onEngineLine?: (line: string) => void;
   onEngineLog?: (line: string) => void;
+  /** Only the wasm engine has this: the phone's takes no measurable time to start. */
+  onEngineProgress?: (text: string) => void;
 };
 
 export type WasmEngineOptions = {
@@ -93,6 +95,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
       worker.onmessage = ({ data }: MessageEvent<FromEngine>) => {
         if (data.kind === 'line') host.onEngineLine?.(data.line);
         else if (data.kind === 'log') host.onEngineLog?.(data.line);
+        else if (data.kind === 'progress') host.onEngineProgress?.(data.text);
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
