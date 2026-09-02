@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "build:net-worker": "esbuild src/netWorkerNode.ts --bundle --platform=node --format=cjs --outfile=build/netWorkerNode.cjs",
-    "test:engine": "npm run build:net-worker && node scripts/node-engine-test.mjs"
+    "test:engine": "npm run build:net-worker && node scripts/node-engine-test.mjs",
+    "check:export": "esbuild src/checkExport.ts --bundle --platform=node --format=cjs --outfile=build/checkExport.cjs && node build/checkExport.cjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",

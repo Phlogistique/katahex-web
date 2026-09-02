@@ -37,7 +37,7 @@ const padC = (c: number) => roundUp(c, 16);
 const f32Scratch = new Float32Array(1);
 const u32Scratch = new Uint32Array(f32Scratch.buffer);
 
-function toHalf(value: number): number {
+export function toHalf(value: number): number {
   f32Scratch[0] = value;
   const bits = u32Scratch[0];
   const sign = (bits >>> 16) & 0x8000;

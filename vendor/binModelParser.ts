@@ -1,3 +1,22 @@
+/**
+ * Every float16 bit pattern widened, built once: a net holds 26 million of them
+ * and a table lookup is the cheapest way to widen that many.
+ */
+const HALF_TO_FLOAT = /* @__PURE__ */ (() => {
+  const table = new Float32Array(65536);
+  for (let h = 0; h < 65536; h++) {
+    const sign = h >> 15 ? -1 : 1;
+    const exponent = (h >> 10) & 0x1f;
+    const mantissa = h & 0x3ff;
+    table[h] = exponent === 0x1f
+      ? (mantissa ? NaN : sign * Infinity)
+      : sign * (exponent
+        ? 2 ** (exponent - 15) * (1 + mantissa / 1024)
+        : 2 ** -14 * (mantissa / 1024));
+  }
+  return table;
+})();
+
 export class KataGoBinModelParser {
   private readonly data: Uint8Array;
   private idx = 0;
@@ -46,22 +65,24 @@ export class KataGoBinModelParser {
     return value;
   }
 
+  private atMarker(marker: string): boolean {
+    for (let i = 0; i < marker.length; i++) {
+      if (this.data[this.idx + i] !== marker.charCodeAt(i)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * The array KataGo writes is float32; scripts/export_net.py rewrites the bulk
+   * of it as float16 under a marker of its own, which is what the page is served.
+   */
   readBinaryFloats(count: number): Float32Array {
     this.skipWhitespace();
-    const marker = this.data.subarray(this.idx, this.idx + 5);
-    if (
-      marker.length !== 5 ||
-      marker[0] !== 0x40 || // @
-      marker[1] !== 0x42 || // B
-      marker[2] !== 0x49 || // I
-      marker[3] !== 0x4e || // N
-      marker[4] !== 0x40 // @
-    ) {
-      throw new Error('Expected @BIN@ marker');
-    }
-    this.idx += 5;
+    const half = this.atMarker('@BINF16@');
+    if (!half && !this.atMarker('@BIN@')) throw new Error('Expected @BIN@ marker');
+    this.idx += half ? 8 : 5;
 
-    const byteLen = count * 4;
+    const byteLen = count * (half ? 2 : 4);
     const absStart = this.data.byteOffset + this.idx;
     const absEnd = absStart + byteLen;
     if (absEnd > this.data.buffer.byteLength) throw new Error('Unexpected EOF while reading binary floats');
@@ -70,7 +91,11 @@ export class KataGoBinModelParser {
     this.idx += byteLen;
     this.skipWhitespace();
 
-    return new Float32Array(buf);
+    if (!half) return new Float32Array(buf);
+    const packed = new Uint16Array(buf);
+    const out = new Float32Array(count);
+    for (let i = 0; i < count; i++) out[i] = HALF_TO_FLOAT[packed[i]];
+    return out;
   }
 }
 

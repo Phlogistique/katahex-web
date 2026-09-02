@@ -15,7 +15,7 @@ import { KataGoWebGpuModel } from './webgpuModel';
 export type ToEngine =
   | { kind: 'start'; boardSize: number; half: boolean; searchThreads: number;
       batchWaitMicros?: number; serverThreads?: number; leafEvals?: number; profile?: boolean;
-      enginePath: string; modelPath: string }
+      enginePath: string; modelPath: string; shapePath?: string }
   | { kind: 'query'; json: string };
 
 export type FromEngine =
@@ -29,6 +29,15 @@ const NUM_ANALYSIS_THREADS = 2;
 
 
 const post = (message: FromEngine) => self.postMessage(message);
+
+/** Servers hand a .gz over with Content-Encoding set as often as not, in which
+ *  case the browser has already inflated it, so go by what the bytes are. */
+async function fetchWeights(path: string): Promise<Uint8Array> {
+  const downloaded = new Uint8Array(await (await fetch(path)).arrayBuffer());
+  if (downloaded[0] !== 0x1f || downloaded[1] !== 0x8b) return downloaded;
+  const stream = new Blob([downloaded]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
 
 /** Mostly the config the Android app writes, minus what is about a phone. */
 const config = (boardSize: number, searchThreads: number, batchWaitMicros: number, serverThreads: number,
@@ -71,7 +80,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   // The newer knobs default here: this is a postMessage boundary, and a
   // driver built against an older shape must keep working.
   const { boardSize, half, searchThreads, batchWaitMicros = 3000, serverThreads = 2,
-          leafEvals = 1, profile = false, enginePath, modelPath } = options;
+          leafEvals = 1, profile = false, enginePath, modelPath, shapePath = modelPath } = options;
 
   const gpu = await navigator.gpu?.requestAdapter();
   const wanted: GPUFeatureName[] = [];
@@ -80,15 +89,13 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   const device = await gpu?.requestDevice({ requiredFeatures: wanted });
   if (!device) throw new Error('no WebGPU device');
 
-  // The file is fetched once and used twice: the engine reads it to learn the
-  // shape of the net it is searching with, and the net is built from it here.
-  // Servers hand a .gz over with Content-Encoding set as often as not, in which
-  // case the browser has already inflated it, so go by what the bytes are.
-  const downloaded = new Uint8Array(await (await fetch(modelPath)).arrayBuffer());
-  const raw = downloaded[0] === 0x1f && downloaded[1] === 0x8b
-    ? new Uint8Array(await new Response(new Blob([downloaded]).stream()
-        .pipeThrough(new DecompressionStream('gzip'))).arrayBuffer())
-    : downloaded;
+  // Two weight files, because the two readers want different things out of one
+  // net: the engine only ever reads its name, version and channel counts -- this
+  // backend evaluates nothing -- so it is given a copy with the weights zeroed,
+  // 100 KB against 49 MB, and the real weights go straight to the GPU. Both are
+  // written by scripts/export_net.py; passing the same path twice is the
+  // full precision net doing both jobs, which is what the node driver does.
+  const [raw, shape] = await Promise.all([fetchWeights(modelPath), fetchWeights(shapePath)]);
 
   // The engine is served verbatim, which is also how it has to be loaded: a
   // plain dynamic import would be rewritten into a request for a module of the
@@ -101,7 +108,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
     printErr: (line: string) => post({ kind: 'log', line }),
   });
 
-  module.FS.writeFile('/model.bin', raw);
+  module.FS.writeFile('/model.bin', shape);
   module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros, serverThreads, leafEvals));
 
   const model = new KataGoWebGpuModel(device, parseKataGoModelV8(raw), boardSize, half);

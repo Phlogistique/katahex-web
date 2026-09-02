@@ -22,7 +22,10 @@ type Host = {
 export type WasmEngineOptions = {
   /** Where the engine and the net are served from. */
   enginePath?: string;
+  /** The weights, half precision, for the GPU. */
   modelPath?: string;
+  /** The same net with the weights zeroed, which is all the engine reads. */
+  shapePath?: string;
   /** Half precision: twice the speed, and the error the native engine also has. */
   half?: boolean;
   /**
@@ -60,10 +63,14 @@ export type WasmEngineOptions = {
   onStats?: (stats: EvalStats) => void;
 };
 
+/** Resolved against the page, so a build serves from a subpath as well as a root. */
+const asset = (path: string) => new URL(path, document.baseURI).href;
+
 export function installWasmEngine(options: WasmEngineOptions = {}): void {
   const {
-    enginePath = '/katahex.js',
-    modelPath = '/hex27x3.bin.gz',
+    enginePath = asset('katahex.js'),
+    modelPath = asset('net-fp16.bin.gz'),
+    shapePath = asset('net-shape.bin.gz'),
     half = true,
     searchThreads = 1,
     batchWaitMicros = 3000,
@@ -89,7 +96,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
-      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, leafEvals, profile, enginePath, modelPath });
+      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, leafEvals, profile, enginePath, modelPath, shapePath });
     },
 
     query(json) {

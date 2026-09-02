@@ -171,12 +171,13 @@ async function tier1(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMod
   return results;
 }
 
-async function tier2(device: GPUDevice, parsed: ReturnType<typeof parseKataGoModelV8>) {
+async function tier2(device: GPUDevice, parsed: ReturnType<typeof parseKataGoModelV8>,
+                     parsedHalf: ReturnType<typeof parseKataGoModelV8>) {
   const positions = await loadBank();
   const count = positions.length;
   const models = {
     fp32: new KataGoWebGpuModel(device, parsed, 11, false),
-    fp16: new KataGoWebGpuModel(device, parsed, 11, true),
+    fp16: new KataGoWebGpuModel(device, parsedHalf, 11, true),
   };
 
   const BATCH = 32;
@@ -251,12 +252,18 @@ async function perf(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMode
 
 async function main() {
   const device = await makeDevice();
-  const parsed = parseKataGoModelV8(await fetchBytes('/hex27x3.bin.gz'));
+  const parsed = parseKataGoModelV8(await fetchBytes(params.get('net') ?? '/hex27x3.bin.gz'));
+  // The half precision side is loaded from the file the page is really served,
+  // so that what tier 2 measures is the whole distance from the oracle: the
+  // half precision arithmetic and the half precision weights together.
+  const halfPath = params.get('net16') ?? '/net-fp16.bin.gz';
+  const parsedHalf = halfPath === (params.get('net') ?? '/hex27x3.bin.gz')
+    ? parsed : parseKataGoModelV8(await fetchBytes(halfPath));
   log('model parsed');
 
   if (params.get('mode') === 'perf') return perf(device, parsed);
 
-  const report = { tier1: await tier1(device, parsed), tier2: await tier2(device, parsed) };
+  const report = { tier1: await tier1(device, parsed), tier2: await tier2(device, parsed, parsedHalf) };
   await driver.report?.(report);
   log('done');
 }

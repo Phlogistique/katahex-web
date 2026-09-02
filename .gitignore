@@ -1,11 +1,14 @@
 node_modules/
 dist/
-public/hex27x3.bin.gz
 build/
 analysis_logs/
+results/
+__pycache__/
+ui/dist/
+ui/dist-web/
+
+# The full precision net and what is derived from it for the benchmarks: 200 MB,
+# and only the exports under public-web/ are ever served. See the README.
+public/hex27x3.bin.gz
 public/hex27x3-*.onnx
 public/ort/
-__pycache__/
-results/
-public/katahex.js
-public/katahex.wasm

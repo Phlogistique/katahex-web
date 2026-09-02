@@ -4,3 +4,7 @@ web-katrain (https://github.com/Sir-Teo/web-katrain), MIT licensed.
 They parse KataGo's `.bin.gz` weight format (model versions 8..16) and build
 a TensorFlow.js graph from it. KataHex's `hex27x3.bin.gz` is a version 11
 `b18c384nbt` net in that same format, so it loads unchanged.
+
+`binModelParser.ts` is modified: `readBinaryFloats` also accepts a float16 array
+under an `@BINF16@` marker, which is what `scripts/export_net.py` writes and what
+the page downloads. Nothing else in these files knows the difference.
