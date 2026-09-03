@@ -248,6 +248,14 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             return;
         }
 
+        // The graph is keyed by node, so this number belongs to `nodeId` whatever the board
+        // has moved on to: it is only what is painted on the board that can be stale. Auto-play
+        // plays its move the moment the analysis it asked for lands, so a bar recorded after
+        // the check below would be dropped for every move of a self-played game.
+        if (showWinrate && typeof result.whiteWin === 'number') {
+            evalsByNodeId.value.set(nodeId, result.whiteWin);
+        }
+
         if (requestId !== analysisRequestId) {
             return; // a newer request has started since; this result is stale, discard it
         }
@@ -259,10 +267,6 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             policyOverlayFacade.setShowNumbers(state.value.policyShowNumbers);
             policyOverlayFacade.setShowBestMark(state.value.policyShowBestMark);
             policyOverlayFacade.apply(result.policy, color);
-        }
-
-        if (showWinrate && typeof result.whiteWin === 'number') {
-            evalsByNodeId.value.set(nodeId, result.whiteWin);
         }
     };
 
@@ -374,20 +378,29 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         // for the position on screen: there is one engine, a search of a position costs seconds
         // and holds its tree until it answers, and submitting a whole line at once is that many
         // trees resident at once. Each result is kept as it arrives, so the graph fills in.
+
         // A superseded run leaves the progress alone: the run that superseded it has set its own.
         const superseded = () => currentAnalyzer.value !== analyzer || run !== lineRun;
 
+        // One position behind is the ordinary churn of playing a move, and auto-play is one
+        // position behind for a whole game. Only a backlog is worth a line of its own.
+        const report = positions.length > 1
+            ? (done: number, waiting: boolean) => {
+                lineProgress.value = { done, total: positions.length, waiting };
+            }
+            : () => {};
+
         lineProgress.value = null;
 
-        for (const [done, { node, input }] of positions.entries()) {
-            const progress = { done, total: positions.length };
+        for (let done = 0; done < positions.length;) {
+            const { node, input } = positions[done];
 
-            lineProgress.value = { ...progress, waiting: false };
+            report(done, false);
 
             const idle = analyzer.whenIdle?.() ?? Promise.resolve();
 
             if (!await settlesWithin(idle, WAIT_NOTICE_MS)) {
-                lineProgress.value = { ...progress, waiting: true };
+                report(done, true);
                 await idle;
             }
 
@@ -397,7 +410,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
                 return;
             }
 
-            lineProgress.value = { ...progress, waiting: false };
+            report(done, false);
 
             try {
                 const { whiteWin } = await analyzer.analyzePosition(input);
@@ -410,11 +423,19 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
                     evalsByNodeId.value.set(node.id, whiteWin);
                 }
             } catch (e) {
-                if (!(e instanceof SearchAborted)) {
-                    // eslint-disable-next-line no-console
-                    console.error('Error while analyzing a position of the line', e);
+                if (e instanceof SearchAborted) {
+                    // The engine was taken back by the position on screen, which every played
+                    // move does. This position is still wanted, so it is asked for again once
+                    // the engine is free; dropping it would leave a hole until the next
+                    // navigation, and auto-play navigates never.
+                    continue;
                 }
+
+                // eslint-disable-next-line no-console
+                console.error('Error while analyzing a position of the line', e);
             }
+
+            ++done;
         }
 
         lineProgress.value = null;

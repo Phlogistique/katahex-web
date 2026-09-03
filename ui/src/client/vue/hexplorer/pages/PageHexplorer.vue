@@ -449,7 +449,6 @@ const onAnalysisFileSelected = async (event: Event) => {
                                         type="checkbox"
                                         class="form-check-input"
                                         v-model="state.autoPlay[player]"
-                                        :disabled="state.autoPlay[1 - player]"
                                         :aria-label="`${$t('hexplorer.autoplay')}, ${playerLabel(player)}`"
                                     >
                                 </td>

@@ -77,7 +77,10 @@ into view. A long line runs the tree thousands of pixels past its panel.
 
 `PageHexplorer.vue`, beyond the analyzer list: the board size field is held to what the engine
 plays, `New` asks before throwing a tree away, the graph says how far it has got filling, and
-the settings checkboxes carry the accessible names their table header gave them.
+the settings checkboxes carry the accessible names their table header gave them. Auto-play can
+also be set on both colours at once, so the engine plays itself; `useHexplorer` was already
+written for that, and PlayHex only locks it out because its analyzers are a server it would be
+hammering.
 
 `PageHexplorer.vue` also carries a credits line in the sidebar footer, naming
 where the ui, the engine and the net come from and linking the source. The AGPL
