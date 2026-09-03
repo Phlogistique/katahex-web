@@ -3,6 +3,10 @@
  * Pauses and resumes the search on the position displayed, and shows how many visits it has
  * done. Only shown while the selected analyzer is one that searches.
  *
+ * Its colour is the state of that search: orange while it runs, green once it has reached the
+ * depth the analyzer stops at, grey while the user holds it paused. `KataHex live` stops at no
+ * depth, so it is orange until paused.
+ *
  * Written for this app; not part of PlayHex.
  */
 import { computed, watch } from 'vue';
@@ -20,11 +24,20 @@ const props = defineProps<{
 
 setAnalyzersRefresh(() => props.update());
 
-const searching = computed(() =>
+const pausable = computed(() =>
     props.analyzer instanceof KatahexAnalyzer && props.analyzer.searches ? props.analyzer : null);
 
-const paused = computed(() => searching.value?.paused.value ?? false);
-const visits = computed(() => searching.value?.visits.value ?? 0);
+const paused = computed(() => pausable.value?.paused.value ?? false);
+const searching = computed(() => pausable.value?.searching.value ?? false);
+const visits = computed(() => pausable.value?.visits.value ?? 0);
+
+const color = computed(() => {
+    if (paused.value) {
+        return 'btn-secondary';
+    }
+
+    return searching.value ? 'btn-warning' : 'btn-success';
+});
 
 // hexplorer points the analyzer it is switching to at the displayed position, but says nothing
 // to the one it is leaving, which would go on searching.
@@ -37,12 +50,12 @@ watch(() => props.analyzer, (_current, previous) => {
 
 <template>
     <button
-        v-if="searching"
+        v-if="pausable"
         type="button"
         class="btn"
-        :class="paused ? 'btn-secondary' : 'btn-success'"
+        :class="color"
         :title="paused ? 'Resume analysis' : 'Pause analysis'"
-        @click="searching.togglePause()"
+        @click="pausable.togglePause()"
     >
         <IconPlayFill v-if="paused" /><IconPauseFill v-else />
         <span class="visits">{{ visits }}</span>

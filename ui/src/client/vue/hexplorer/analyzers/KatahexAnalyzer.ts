@@ -23,6 +23,12 @@ export class KatahexAnalyzer implements AnalyzerInterface
     /** Paused by the user. Search stops, whatever it had found stays on screen. */
     readonly paused = ref(false);
 
+    /**
+     * Whether a search of the position on screen is running: not paused, and not already as deep
+     * as this analyzer goes. The pause button is coloured by it.
+     */
+    readonly searching = ref(false);
+
     /** Visits in the search on screen, shown on the pause button. */
     readonly visits = ref(0);
 
@@ -227,6 +233,8 @@ export class KatahexAnalyzer implements AnalyzerInterface
 
     private release(): void
     {
+        this.searching.value = this.isSearching();
+
         if (this.free()) {
             for (const resolve of this.idle.splice(0)) {
                 resolve();
