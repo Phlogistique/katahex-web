@@ -22,6 +22,7 @@ import { gameTreeToSgf } from '../exportSgf.js';
 import { sgfToString } from '../../../../shared/sgf/index.js';
 import { downloadString } from '../../../services/fileDownload.js';
 import { DragPainter } from '../DragPainter.js';
+import { SearchAborted } from '../../../../engine.js';
 
 /**
  * Walks a square board and splits the stones it holds into a black and a white move list,
@@ -81,6 +82,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
 
     // Evaluation cache, keyed by tree node id, filled in progressively as positions are analyzed.
     const evalsByNodeId = ref(new Map<number, number>());
+
+    // How far the evaluation graph has got, for the ui to say so: the positions behind the one
+    // on screen are searched one after the other, which on a long game is minutes of work.
+    const ancestorProgress = ref<{ done: number, total: number } | null>(null);
 
     // Mutable game instances, updated when the board is rebuilt or navigated.
     let gameView: GameView = null!;
@@ -311,6 +316,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         return game;
     };
 
+    // Bumped on every fillAncestorEvals() call, so a run still working through a line drops out
+    // as soon as another has started on a different one.
+    let ancestorRun = 0;
+
     /**
      * Computes/caches the evaluation of every not-yet-cached ancestor along the given path
      * (the path's last node, i.e the currently displayed one, is left to updateAnalysis()).
@@ -319,6 +328,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
      */
     const fillAncestorEvals = async (path: TreeNode[]): Promise<void> => {
         const analyzer = currentAnalyzer.value;
+        const run = ++ancestorRun;
 
         if (!analyzer) {
             return;
@@ -352,30 +362,42 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             });
         }
 
-        // katahex-android: the whole line at once rather than one position after the other.
-        // The engine is on the phone gpu, where a lone evaluation costs about a second and
-        // twenty submitted together cost 25ms each.
-        const evals = await Promise.all(positions.map(async ({ node, input }) => {
+        // One position after the other, and each of them only once nothing is being computed
+        // for the position on screen: there is one engine, a search of a position costs seconds
+        // and holds its tree until it answers, and submitting a whole line at once is that many
+        // trees resident at once. Each result is kept as it arrives, so the graph fills in.
+        ancestorProgress.value = positions.length > 0 ? { done: 0, total: positions.length } : null;
+
+        for (const [done, { node, input }] of positions.entries()) {
+            await analyzer.whenIdle?.();
+
+            // The analyzer may have been swapped while we were waiting (see setAnalyzer, which
+            // drops the cache): these numbers would belong to a previous engine.
+            if (currentAnalyzer.value !== analyzer || run !== ancestorRun) {
+                return;
+            }
+
             try {
-                return { node, whiteWin: (await analyzer.analyzePosition(input)).whiteWin };
+                const { whiteWin } = await analyzer.analyzePosition(input);
+
+                if (currentAnalyzer.value !== analyzer || run !== ancestorRun) {
+                    return;
+                }
+
+                if (typeof whiteWin === 'number') {
+                    evalsByNodeId.value.set(node.id, whiteWin);
+                }
             } catch (e) {
-                // eslint-disable-next-line no-console
-                console.error('Error while analyzing ancestor position', e);
-                return null;
+                if (!(e instanceof SearchAborted)) {
+                    // eslint-disable-next-line no-console
+                    console.error('Error while analyzing ancestor position', e);
+                }
             }
-        }));
 
-        // The analyzer may have been swapped while we were computing (see setAnalyzer,
-        // which drops the cache): these numbers now belong to a previous engine, discard them.
-        if (currentAnalyzer.value !== analyzer) {
-            return;
+            ancestorProgress.value = { done: done + 1, total: positions.length };
         }
 
-        for (const evaluation of evals) {
-            if (evaluation && typeof evaluation.whiteWin === 'number') {
-                evalsByNodeId.value.set(evaluation.node.id, evaluation.whiteWin);
-            }
-        }
+        ancestorProgress.value = null;
     };
 
     /**
@@ -612,6 +634,11 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
 
         try {
             move = (await analyzer.analyzePosition({ size, color, black, white })).recommendedMove ?? null;
+        } catch (e) {
+            if (!(e instanceof SearchAborted)) {
+                // eslint-disable-next-line no-console
+                console.error('Error while computing the auto-play move', e);
+            }
         } finally {
             autoPlayRunning = false;
         }
@@ -965,6 +992,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         currentTool,
         evalHistory,
         evalCursorIndex,
+        ancestorProgress,
         goToEvalIndex,
         goToNode,
         userGoToNode,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { whenever } from '@vueuse/core';
-import { computed, ref, useTemplateRef } from 'vue';
+import { computed, ref, useTemplateRef, watch } from 'vue';
 import { defineOverlay } from '@overlastic/vue';
 import { t } from 'i18next';
 import { PlaceStoneTool } from '../tools/PlaceStoneTool';
@@ -48,6 +48,7 @@ import { PlaceMarkTool } from '../tools/PlaceMarkTool.js';
 import { analyzers, defaultAnalyzer } from '../../../../analyzers.js'; // katahex-android: on-device engines
 import LiveAnalysisButton from '../components/LiveAnalysisButton.vue';
 import { searching, speed } from '../../../../engineSpeed.js';
+import { MAX_BOARD_SIZE, MIN_BOARD_SIZE } from '../../../../engine.js';
 
 useHead({
     title: t('hexplorer.title'),
@@ -64,6 +65,7 @@ const {
     analysisLoading,
     evalHistory,
     evalCursorIndex,
+    ancestorProgress,
     goToEvalIndex,
     userGoToNode,
     goToParent,
@@ -92,8 +94,23 @@ const {
     defaultAnalyzer,
 );
 
-const newBoardsize = ref(gameView.value.getBoardsize());
+const newBoardsize = ref(state.value.boardsize);
 const labelText = ref('A');
+
+// An import, a loaded file or a new board changes the size under the field, which would
+// otherwise still offer the size of the game before it.
+watch(() => state.value.boardsize, size => { newBoardsize.value = size; });
+
+/** Throws the tree away for an empty board, asking first when there is something to lose. */
+const startNewAnalysis = (): void => {
+    if (tree.nodes.value.length > 1 && !window.confirm(t('hexplorer.new_analysis_confirm'))) {
+        return;
+    }
+
+    void resetState(Math.min(MAX_BOARD_SIZE, Math.max(MIN_BOARD_SIZE, newBoardsize.value)));
+};
+
+const playerLabel = (player: 0 | 1): string => player === 0 ? t('game.red') : t('game.blue');
 
 const selectedAnalyzerName = computed({
     get: () => currentAnalyzer.value?.getName() ?? '',
@@ -416,6 +433,7 @@ const onAnalysisFileSelected = async (event: Event) => {
                                         type="checkbox"
                                         class="form-check-input"
                                         v-model="state.winrateEnabled[player]"
+                                        :aria-label="`${$t('hexplorer.win_rate')}, ${playerLabel(player)}`"
                                     >
                                 </td>
                                 <td class="text-center">
@@ -423,6 +441,7 @@ const onAnalysisFileSelected = async (event: Event) => {
                                         type="checkbox"
                                         class="form-check-input"
                                         v-model="state.policyEnabled[player]"
+                                        :aria-label="`${$t('hexplorer.policy')}, ${playerLabel(player)}`"
                                     >
                                 </td>
                                 <td class="text-center">
@@ -431,6 +450,7 @@ const onAnalysisFileSelected = async (event: Event) => {
                                         class="form-check-input"
                                         v-model="state.autoPlay[player]"
                                         :disabled="state.autoPlay[1 - player]"
+                                        :aria-label="`${$t('hexplorer.autoplay')}, ${playerLabel(player)}`"
                                     >
                                 </td>
                             </tr>
@@ -479,12 +499,18 @@ const onAnalysisFileSelected = async (event: Event) => {
                     at batch {{ Math.round(speed.batch) }}</template></template>
                 </p>
 
-                <EvaluationGraph
-                    :evalHistory
-                    :cursorIndex="evalCursorIndex"
-                    class="mb-3 bg-body"
-                    @select="goToEvalIndex"
-                />
+                <div class="mb-3">
+                    <EvaluationGraph
+                        :evalHistory
+                        :cursorIndex="evalCursorIndex"
+                        class="bg-body"
+                        @select="goToEvalIndex"
+                    />
+
+                    <p v-if="ancestorProgress" class="graph-progress text-body-secondary mt-1 mb-0">
+                        {{ $t('hexplorer.filling_graph', ancestorProgress) }}
+                    </p>
+                </div>
 
                 <h6 class="d-flex align-items-center gap-2 mb-2">
                     <IconDiagram2 /> {{ $t('hexplorer.move_history') }}
@@ -505,13 +531,15 @@ const onAnalysisFileSelected = async (event: Event) => {
                     <div class="input-group input-group-sm" style="max-width: 9rem" :title="$t('hexplorer.new_analysis')">
                         <input
                             type="number"
-                            min="1"
+                            :min="MIN_BOARD_SIZE"
+                            :max="MAX_BOARD_SIZE"
                             v-model.number="newBoardsize"
                             class="form-control"
+                            :aria-label="$t('hexplorer.board_size')"
                         >
                         <button
                             class="btn btn-outline-warning"
-                            @click="resetState(newBoardsize)"
+                            @click="startNewAnalysis()"
                         ><IconFileEarmarkPlus /> {{ $t('hexplorer.new') }}</button>
                     </div>
 
@@ -698,12 +726,12 @@ sidebarOpen()
     min-height 0
     width 100%
 
-.speed
+.speed, .graph-progress
     font-size 0.75rem
     font-variant-numeric tabular-nums
 
-    &.stale
-        opacity 0.5
+.speed.stale
+    opacity 0.5
 
 .credits
     font-size 0.7rem

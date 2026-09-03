@@ -15,6 +15,19 @@ void i18next.init({
     interpolation: { escapeValue: false },
 });
 
+/*
+ * Engine status. The engine takes a few seconds to load the net, and a board size with no
+ * cached tuning takes about twenty minutes on first use, so it says so rather than looking dead.
+ * Wired up before the app is mounted: mounting analyses the position the page opened on, and
+ * a board size the engine cannot play has nothing to say after that first refusal.
+ */
+const status = document.getElementById('engine-status') as HTMLElement;
+
+engine.onStatus = (text, ready) => {
+    status.textContent = text;
+    status.hidden = ready;
+};
+
 const app = createApp(PageHexplorer);
 
 // PlayHex's templates call $t, which its i18next-vue plugin provides.
@@ -25,17 +38,6 @@ app.config.globalProperties.$t = t;
 app.use(unoverlay);
 
 app.mount('#app');
-
-/*
- * Engine status. The engine takes a few seconds to load the net, and a board size with no
- * cached tuning takes about twenty minutes on first use, so it says so rather than looking dead.
- */
-const status = document.getElementById('engine-status') as HTMLElement;
-
-engine.onStatus = (text, ready) => {
-    status.textContent = text;
-    status.hidden = ready;
-};
 
 /*
  * Going to the background is this app's "leaving the page": PlayHex persists its analysis cache

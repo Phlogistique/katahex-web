@@ -53,6 +53,22 @@ type Live = {
 /** What an unbounded search asks for: enough that it is ended by terminating it. */
 const ENDLESS = 100000000;
 
+/**
+ * The board sizes the engine takes: it parses boardXSize between 2 and Board::MAX_LEN, and
+ * scripts/build-engine.sh compiles the wasm build with MAX_BOARD_LEN=19. Starting it outside
+ * that aborts the whole wasm module, leaving a page that looks ready and analyses nothing.
+ */
+export const MIN_BOARD_SIZE = 2;
+export const MAX_BOARD_SIZE = 19;
+
+/** Rejection of a search dropped before it answered, so the position on screen can be searched. */
+export class SearchAborted extends Error
+{
+    constructor() {
+        super('search aborted');
+    }
+}
+
 /** Row-major, one row per y, matching hexplorer's policy[row][col] and the engine's own order. */
 const grid = (size: number, valueAt: (row: number, col: number) => number): number[][] =>
     Array.from({ length: size }, (_, row) =>
@@ -64,8 +80,9 @@ const grid = (size: number, valueAt: (row: number, col: number) => number): numb
  * The engine sizes its neural net buffers from the board size it was started with, so a size
  * change is a restart; queries submitted meanwhile are held and sent once it is ready again.
  *
- * Several queries can be in flight at once, which is what makes reviewing a whole line bearable:
- * a lone evaluation on the phone gpu costs about a second, twenty at once cost 25ms each.
+ * It searches one position at a time. A search holds a tree of every position it visited, and
+ * the wasm heap it grows into is never given back, so a line submitted at once is a line's worth
+ * of trees resident at once -- hundreds of megabytes a position.
  */
 class Engine {
     /** Called with engine progress and errors; the ui shows it while the engine is not usable. */
@@ -87,6 +104,9 @@ class Engine {
 
     private size = 0;
     private ready = false;
+
+    /** Set while a board size the engine cannot play is on screen, so the banner can be cleared. */
+    private refused = false;
     private seq = 0;
     private pending = new Map<string, Pending>();
     private live: Live | null = null;
@@ -108,7 +128,9 @@ class Engine {
             return Promise.reject(new Error('no engine (browser preview)'));
         }
 
-        this.ensureSize(input.size);
+        if (!this.ensureSize(input.size)) {
+            return Promise.reject(new Error(`board size ${input.size} is out of range`));
+        }
 
         const id = 'q' + ++this.seq;
         const json = this.query(id, input, { maxVisits });
@@ -129,7 +151,14 @@ class Engine {
         }
 
         this.unwatch();
-        this.ensureSize(input.size);
+
+        if (!this.ensureSize(input.size)) {
+            return;
+        }
+
+        // One query at a time: what is left of the evaluation graph's line waits for the
+        // position the user is looking at.
+        this.abortPending();
 
         const id = 'live' + ++this.seq;
         const json = this.query(id, input, {
@@ -163,6 +192,15 @@ class Engine {
         this.live = null;
     }
 
+    /** Drops the one-shot searches in flight, telling the engine to stop them. */
+    private abortPending(): void {
+        for (const [id, request] of this.pending) {
+            this.pending.delete(id);
+            window.Native?.query(JSON.stringify({ id: 'x', action: 'terminate', terminateId: id }));
+            request.reject(new SearchAborted());
+        }
+    }
+
     private query(id: string, input: AnalysisInput, options: object): string {
         return JSON.stringify({
             id,
@@ -190,15 +228,34 @@ class Engine {
         }
     }
 
-    private ensureSize(size: number): void {
-        if (size === this.size) {
-            return;
+    /** Starts the engine on this board size if it is not on it already. False if it cannot be. */
+    private ensureSize(size: number): boolean {
+        if (size < MIN_BOARD_SIZE || size > MAX_BOARD_SIZE) {
+            this.refused = true;
+            this.onStatus(
+                `the engine plays boards from ${MIN_BOARD_SIZE}×${MIN_BOARD_SIZE} to `
+                + `${MAX_BOARD_SIZE}×${MAX_BOARD_SIZE}, not ${size}×${size}`,
+                false,
+            );
+            return false;
         }
 
-        this.size = size;
-        this.ready = false;
-        this.onStatus(`starting engine for ${size}×${size}…`, false);
-        window.Native!.start(size);
+        if (this.refused) {
+            this.refused = false;
+
+            if (this.ready) {
+                this.onStatus('engine ready', true);
+            }
+        }
+
+        if (size !== this.size) {
+            this.size = size;
+            this.ready = false;
+            this.onStatus(`starting engine for ${size}×${size}…`, false);
+            window.Native!.start(size);
+        }
+
+        return true;
     }
 
     private log(line: string): void {

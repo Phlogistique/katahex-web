@@ -19,6 +19,13 @@ export interface AnalyzerInterface
     persistCache?(): void;
 
     /**
+     * Resolves when nothing is being computed for the displayed position, so that a caller
+     * asking about another one does not compete with it. Resolved at once by an analyzer that
+     * answers without an engine.
+     */
+    whenIdle?(): Promise<void>;
+
+    /**
      * Called with the position now displayed, or null when nothing is analyzed.
      * An analyzer that keeps searching uses it to know which position to search, and to tell
      * it apart from the ancestors it is also asked about.

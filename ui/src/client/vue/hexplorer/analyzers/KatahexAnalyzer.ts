@@ -37,6 +37,7 @@ export class KatahexAnalyzer implements AnalyzerInterface
     private displayed: AnalysisInput | null = null;
     private searched: EngineAnalysis | null = null;
     private waiting: { minVisits: number, resolve: (analysis: EngineAnalysis | null) => void }[] = [];
+    private idle: (() => void)[] = [];
 
     constructor(
         private maxVisits: number,
@@ -117,6 +118,10 @@ export class KatahexAnalyzer implements AnalyzerInterface
 
             if (searched) {
                 analysisStore.write(input, searched);
+
+                // isSearching() reads the store: the search that just landed may be the one
+                // that reached the depth asked for, and so the end of it.
+                this.release();
             }
 
             // The store may hold a deeper search than the one running: this one starts from
@@ -128,6 +133,24 @@ export class KatahexAnalyzer implements AnalyzerInterface
         }
 
         return await analysisStore.fill(input, this.floor, () => engine.analyse(input, this.floor));
+    }
+
+    /**
+     * Resolves once the engine has nothing to do for the position on screen: pausing, switching
+     * away and reaching the depth asked for all count, being in the background does not. The
+     * evaluation graph's ancestors wait on it, so that the position the user is looking at has
+     * the engine to itself.
+     *
+     * With `KataHex live` there is no such moment while it is running, so that graph fills
+     * while the search is paused.
+     */
+    whenIdle(): Promise<void>
+    {
+        if (this.free()) {
+            return Promise.resolve();
+        }
+
+        return new Promise(resolve => this.idle.push(resolve));
     }
 
     persistCache(): void
@@ -196,8 +219,20 @@ export class KatahexAnalyzer implements AnalyzerInterface
         return new Promise(resolve => this.waiting.push({ minVisits, resolve }));
     }
 
+    /** Whether the engine is there to be spent on something other than the position on screen. */
+    private free(): boolean
+    {
+        return this.awake && !this.isSearching();
+    }
+
     private release(): void
     {
+        if (this.free()) {
+            for (const resolve of this.idle.splice(0)) {
+                resolve();
+            }
+        }
+
         this.waiting = this.waiting.filter(waiter => {
             if (this.searched && this.searched.visits >= waiter.minVisits) {
                 waiter.resolve(this.searched);
