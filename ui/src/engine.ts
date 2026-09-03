@@ -30,6 +30,7 @@ type Reply = {
     error?: string;
     action?: string;
     noResults?: boolean;
+    isDuringSearch?: boolean;
     rootInfo?: { currentPlayer: 'B' | 'W'; winrate: number; visits: number; utility: number; weight: number };
     moveInfos?: { move: string; utility: number; winrate: number; visits: number }[];
     policy?: number[];
@@ -37,6 +38,10 @@ type Reply = {
 
 type Pending = {
     json: string;
+
+    /** Visits already counted, since a search reports the total it has reached each time. */
+    reported: number;
+
     resolve: (analysis: EngineAnalysis) => void;
     reject: (error: Error) => void;
 };
@@ -133,10 +138,13 @@ class Engine {
         }
 
         const id = 'q' + ++this.seq;
-        const json = this.query(id, input, { maxVisits });
+        // Reporting as it grows is what keeps the speed readout honest: a search that answered
+        // only at the end would have its whole visit count land in whichever four seconds the
+        // reply happened to arrive in, and read several times the rate the engine was running at.
+        const json = this.query(id, input, { maxVisits, reportDuringSearchEvery: 0.5 });
 
         return new Promise((resolve, reject) => {
-            this.pending.set(id, { json, resolve, reject });
+            this.pending.set(id, { json, reported: 0, resolve, reject });
             this.send(json);
         });
     }
@@ -313,15 +321,20 @@ class Engine {
             return;
         }
 
-        this.pending.delete(reply.id);
-
         if (reply.error || !reply.rootInfo) {
+            this.pending.delete(reply.id);
             request.reject(new Error(reply.error ?? 'engine returned no analysis'));
             return;
         }
 
-        // A bounded search answers once, with everything it did.
-        this.totalVisits += reply.rootInfo.visits;
+        this.totalVisits += reply.rootInfo.visits - request.reported;
+        request.reported = reply.rootInfo.visits;
+
+        if (reply.isDuringSearch) {
+            return;
+        }
+
+        this.pending.delete(reply.id);
         request.resolve(this.toAnalysis(reply));
     }
 
