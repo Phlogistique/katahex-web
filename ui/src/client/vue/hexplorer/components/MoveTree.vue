@@ -5,7 +5,7 @@
  * by straight (not diagonal) lines: a single line down for a single
  * child, a horizontal bar + verticals when branching.
  */
-import { computed } from 'vue';
+import { computed, onMounted, useTemplateRef, watch } from 'vue';
 import { GameTree } from '../GameTree.js';
 import AppConditionalMoveButton from '../../components/AppConditionalMoveButton.vue';
 import { IconPencilSquare } from '../../icons.js';
@@ -38,6 +38,22 @@ const label = computed(() => {
     }
 });
 
+const button = useTemplateRef<HTMLButtonElement>('button');
+
+/*
+ * A line grows the tree sideways well past its window, so the node the board is showing has to
+ * be brought back into view -- on navigation, and on load, where a whole imported game is laid
+ * out at once. 'nearest' so a node already visible does not move the panel.
+ */
+const revealIfCurrent = (): void => {
+    if (props.nodeId === props.currentNodeId) {
+        button.value?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+};
+
+onMounted(revealIfCurrent);
+watch(() => props.currentNodeId, revealIfCurrent, { flush: 'post' });
+
 const playerIndex = computed<0 | 1>(() => {
     const { data } = node.value;
 
@@ -56,6 +72,7 @@ const playerIndex = computed<0 | 1>(() => {
     <div class="tree-node">
         <button
             v-if="node.data !== null"
+            ref="button"
             type="button"
             class="tree-node-button"
             :class="{ 'tree-node-current': nodeId === currentNodeId }"
