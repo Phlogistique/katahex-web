@@ -10,8 +10,14 @@
        require-corp. Its default is COEP credentialless plus a path that degrades
        to require-corp by posting the worker a message and reloading at once; if
        the reload beats the message the second load is credentialless again, and
-       the script has already recorded that it degraded, so it never retries. -->
-  <script>window.coi = { coepCredentialless: () => false };</script>
+       the script has already recorded that it degraded, so it never retries.
+
+       Reloading is ours for the same reason: the script reloads the instant an
+       install starts, which can beat the worker taking control, and having
+       recorded that it reloaded once it never registers again -- a page stuck
+       without SharedArrayBuffer until someone reloads it by hand. web.ts waits
+       for a worker that is actually active. -->
+  <script>window.coi = { coepCredentialless: () => false, doReload: () => {} };</script>
   <script src="/coi-serviceworker.js"></script>
   <div id="app"></div>
   <p id="engine-status" hidden></p>
