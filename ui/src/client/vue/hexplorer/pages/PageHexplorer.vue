@@ -65,7 +65,7 @@ const {
     analysisLoading,
     evalHistory,
     evalCursorIndex,
-    ancestorProgress,
+    lineProgress,
     goToEvalIndex,
     userGoToNode,
     goToParent,
@@ -507,8 +507,8 @@ const onAnalysisFileSelected = async (event: Event) => {
                         @select="goToEvalIndex"
                     />
 
-                    <p v-if="ancestorProgress" class="graph-progress text-body-secondary mt-1 mb-0">
-                        {{ $t('hexplorer.filling_graph', ancestorProgress) }}
+                    <p v-if="lineProgress" class="graph-progress text-body-secondary mt-1 mb-0">
+                        {{ $t(lineProgress.waiting ? 'hexplorer.filling_graph_waiting' : 'hexplorer.filling_graph', lineProgress) }}
                     </p>
                 </div>
 

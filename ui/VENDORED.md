@@ -19,7 +19,7 @@ resolve their relative imports without being touched.
     src/shared/sgf
     src/shared/app/hexplorer.ts           the analyzer input/output contract
     src/shared/app/hex-game-importer      sgf / hexworld / little golem / raw moves import
-    src/shared/app/en.json                locales/en.json
+    src/shared/app/en.json                locales/en.json, plus the keys the patches below need
     src/client/vue/components/AppConditionalMoveButton.vue
     src/client/vue/hexplorer                       (except the patches below)
 
@@ -53,17 +53,31 @@ covers what they do. Two files go with them: `src/client/apiClient.ts`, which st
 server they called, and `hexplorer/services/cachedAnalysis.ts`, which `src/analysisStore.ts`
 replaces.
 
-`src/client/vue/hexplorer/analyzers/AnalyzerInterface.ts`: an optional `setDisplayedPosition`,
-called with the position now on screen. An analyzer that keeps searching needs to tell it apart
-from the ancestors it is also asked about.
+`src/client/vue/hexplorer/analyzers/AnalyzerInterface.ts`: two optional methods.
+`setDisplayedPosition` is called with the position now on screen, so an analyzer that keeps
+searching can tell it apart from the ancestors it is also asked about. `whenIdle` resolves when
+that position needs nothing more, and is what the ancestors wait on.
 
 `src/client/vue/hexplorer/composables/useHexplorer.ts`:
 
 - `updateAnalysis` calls `setDisplayedPosition`.
-- `fillAncestorEvals` submits the line's positions together rather than one after the other. On
-  the phone gpu a lone evaluation costs about a second and twenty at once cost 25ms each, so
-  reviewing a whole line is only bearable batched.
+- `fillAncestorEvals` becomes `fillLineEvals`: it waits on `whenIdle` before each position and
+  keeps each result as it arrives. There is one engine here rather than a server: a search holds
+  the tree of every position it visited until it answers, in a wasm heap that is never given
+  back, so a line submitted at once is a line's worth of trees resident at once. It also covers
+  the whole line the graph draws rather than only the moves up to the cursor, and reports how far
+  it has got, which the sidebar shows under the graph.
+- `setAnalyzer` keeps the evaluations already computed. PlayHex drops them because its
+  analyzers are different engines; here they are one engine and one net at different depths,
+  reading a store that keeps the deepest search it has of a position.
 - The `PlayingGameFacade`s are built with the last move marked, which hexplorer turns off.
+
+`src/client/vue/hexplorer/components/MoveTree.vue`: the node the board is showing is scrolled
+into view. A long line runs the tree thousands of pixels past its panel.
+
+`PageHexplorer.vue`, beyond the analyzer list: the board size field is held to what the engine
+plays, `New` asks before throwing a tree away, the graph says how far it has got filling, and
+the settings checkboxes carry the accessible names their table header gave them.
 
 `PageHexplorer.vue` also carries a credits line in the sidebar footer, naming
 where the ui, the engine and the net come from and linking the source. The AGPL

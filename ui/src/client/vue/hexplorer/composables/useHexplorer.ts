@@ -83,9 +83,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     // Evaluation cache, keyed by tree node id, filled in progressively as positions are analyzed.
     const evalsByNodeId = ref(new Map<number, number>());
 
-    // How far the evaluation graph has got, for the ui to say so: the positions behind the one
-    // on screen are searched one after the other, which on a long game is minutes of work.
-    const ancestorProgress = ref<{ done: number, total: number } | null>(null);
+    // How far the evaluation graph has got, for the ui to say so: the line is searched one
+    // position after the other, which on a long game is minutes of work. `waiting` is the engine
+    // being busy with the position on screen rather than with the graph.
+    const lineProgress = ref<{ done: number, total: number, waiting: boolean } | null>(null);
 
     // Mutable game instances, updated when the board is rebuilt or navigated.
     let gameView: GameView = null!;
@@ -316,21 +317,30 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         return game;
     };
 
-    // Bumped on every fillAncestorEvals() call, so a run still working through a line drops out
+    // Bumped on every fillLineEvals() call, so a run still working through a line drops out
     // as soon as another has started on a different one.
-    let ancestorRun = 0;
+    let lineRun = 0;
+
+    /** Below this a wait is not worth telling the reader about, and would only flash at them. */
+    const WAIT_NOTICE_MS = 300;
+
+    const settlesWithin = (promise: Promise<unknown>, ms: number): Promise<boolean> => Promise.race([
+        promise.then(() => true),
+        new Promise<boolean>(resolve => setTimeout(() => resolve(false), ms)),
+    ]);
 
     /**
-     * Computes/caches the evaluation of every not-yet-cached ancestor along the given path
-     * (the path's last node, i.e the currently displayed one, is left to updateAnalysis()).
-     * Runs on a headless Game instance, independent of the visible board, so it can run in
-     * the background without blocking or racing with further navigation.
+     * Computes/caches the evaluation of every not-yet-cached position in the line the graph
+     * draws, the continuation past the cursor included; the displayed one is left to
+     * updateAnalysis(). Runs on a headless Game instance, independent of the visible board, so
+     * it can run in the background without blocking or racing with further navigation.
      */
-    const fillAncestorEvals = async (path: TreeNode[]): Promise<void> => {
+    const fillLineEvals = async (): Promise<void> => {
         const analyzer = currentAnalyzer.value;
-        const run = ++ancestorRun;
+        const run = ++lineRun;
 
         if (!analyzer) {
+            lineProgress.value = null;
             return;
         }
 
@@ -338,14 +348,12 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         const game = new Game(boardsize);
         const positions: { node: TreeNode, input: Parameters<AnalyzerInterface['analyzePosition']>[0] }[] = [];
 
-        for (let i = 0; i < path.length - 1; ++i) {
-            const node = path[i];
-
+        for (const node of currentLine.value) {
             if (!applyNodeToGame(game, node)) {
                 break;
             }
 
-            if (evalsByNodeId.value.has(node.id)) {
+            if (node.id === currentNodeId.value || evalsByNodeId.value.has(node.id)) {
                 continue;
             }
 
@@ -366,21 +374,35 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         // for the position on screen: there is one engine, a search of a position costs seconds
         // and holds its tree until it answers, and submitting a whole line at once is that many
         // trees resident at once. Each result is kept as it arrives, so the graph fills in.
-        ancestorProgress.value = positions.length > 0 ? { done: 0, total: positions.length } : null;
+        // A superseded run leaves the progress alone: the run that superseded it has set its own.
+        const superseded = () => currentAnalyzer.value !== analyzer || run !== lineRun;
+
+        lineProgress.value = null;
 
         for (const [done, { node, input }] of positions.entries()) {
-            await analyzer.whenIdle?.();
+            const progress = { done, total: positions.length };
+
+            lineProgress.value = { ...progress, waiting: false };
+
+            const idle = analyzer.whenIdle?.() ?? Promise.resolve();
+
+            if (!await settlesWithin(idle, WAIT_NOTICE_MS)) {
+                lineProgress.value = { ...progress, waiting: true };
+                await idle;
+            }
 
             // The analyzer may have been swapped while we were waiting (see setAnalyzer, which
             // drops the cache): these numbers would belong to a previous engine.
-            if (currentAnalyzer.value !== analyzer || run !== ancestorRun) {
+            if (superseded()) {
                 return;
             }
+
+            lineProgress.value = { ...progress, waiting: false };
 
             try {
                 const { whiteWin } = await analyzer.analyzePosition(input);
 
-                if (currentAnalyzer.value !== analyzer || run !== ancestorRun) {
+                if (superseded()) {
                     return;
                 }
 
@@ -390,14 +412,12 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             } catch (e) {
                 if (!(e instanceof SearchAborted)) {
                     // eslint-disable-next-line no-console
-                    console.error('Error while analyzing ancestor position', e);
+                    console.error('Error while analyzing a position of the line', e);
                 }
             }
-
-            ancestorProgress.value = { done: done + 1, total: positions.length };
         }
 
-        ancestorProgress.value = null;
+        lineProgress.value = null;
     };
 
     /**
@@ -420,9 +440,14 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     };
 
     /**
-     * Swaps the analyzer used to compute winrate/policy at runtime.
-     * Cached evaluations are dropped (a different engine yields different numbers)
-     * and the current position (plus its ancestors) is re-analyzed in the background.
+     * Swaps the analyzer used to compute winrate/policy at runtime, and re-analyzes the line in
+     * the background.
+     *
+     * The evaluations already computed are kept: every analyzer here is the same engine and the
+     * same net at a different depth, reading one store that keeps the deepest search it has seen
+     * of a position. Dropping them would blank the graph on every switch, and with `KataHex
+     * live` selected it would stay blank, since that never stops searching the position on
+     * screen for the rest of the line to be evaluated.
      */
     const setAnalyzer = (analyzer: AnalyzerInterface | null): void => {
         if (analyzer === currentAnalyzer.value) {
@@ -432,11 +457,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         currentAnalyzer.value?.persistCache?.();
         currentAnalyzer.value = analyzer;
 
-        evalsByNodeId.value = new Map();
         whiteWin.value = undefined;
 
         void updateAnalysis();
-        void fillAncestorEvals(tree.getPath(currentNodeId.value));
+        void fillLineEvals();
     };
 
     /**
@@ -484,7 +508,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         playingGameFacade = pgf;
         showNode(id);
 
-        void fillAncestorEvals(path);
+        void fillLineEvals();
     };
 
     const currentParentId = computed<number | null>(() => tree.getNode(currentNodeId.value).parentId);
@@ -992,7 +1016,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         currentTool,
         evalHistory,
         evalCursorIndex,
-        ancestorProgress,
+        lineProgress,
         goToEvalIndex,
         goToNode,
         userGoToNode,
