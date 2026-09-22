@@ -119,12 +119,22 @@ async function tier1(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMod
   if (at !== data.length) throw new Error('tier1 features do not match manifest');
 
   const results: { id: string; worst: Record<string, number>; finite: boolean }[] = [];
+  const weights: { size: number; worst: number }[] = [];
   for (const size of [11, 13]) {
     const ofSize = positions.filter((p) => p.size === size);
     if (!ofSize.length) continue;
-    const model = new KataGoWebGpuModel(device, parsed, size, false);
+    const model = new KataGoWebGpuModel(device, parsed, size, false, true);
     const out = await evaluateBatch(model, ofSize, size);
     ofSize.forEach((p, i) => results.push({ id: p.id, ...compare(heads(out, i), p.golden) }));
+
+    // What the page holds is the same weights as f16 pairs. That rounding is
+    // tens of times the goldens' tolerance, so judge it against the model
+    // above, which the goldens have just pinned.
+    const packed = new KataGoWebGpuModel(device, parsed, size, false);
+    const outPacked = await evaluateBatch(packed, ofSize, size);
+    packed.dispose();
+    weights.push({ size, worst: Math.max(...ofSize.flatMap((_, i) =>
+      Object.values(compare(heads(out, i), heads(outPacked, i)).worst))) });
 
     // Batch-shape invariance, on the 11x11 set: the same positions as ragged
     // partial tiles (5+11) and alone (batch 1) must answer the same.
@@ -167,8 +177,9 @@ async function tier1(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMod
     model.dispose();
   }
   const overall = Math.max(...results.flatMap((r) => Object.values(r.worst)));
-  log(`tier 1: worst error vs goldens ${overall.toExponential(2)} over ${results.length} checks`);
-  return results;
+  log(`tier 1: worst error vs goldens ${overall.toExponential(2)} over ${results.length} checks, ` +
+      `f16 weights cost ${Math.max(...weights.map((w) => w.worst)).toExponential(2)}`);
+  return { tier1: results, weights };
 }
 
 async function tier2(device: GPUDevice, parsed: ReturnType<typeof parseKataGoModelV8>,
@@ -176,7 +187,7 @@ async function tier2(device: GPUDevice, parsed: ReturnType<typeof parseKataGoMod
   const positions = await loadBank();
   const count = positions.length;
   const models = {
-    fp32: new KataGoWebGpuModel(device, parsed, 11, false),
+    fp32: new KataGoWebGpuModel(device, parsed, 11, false, true),
     fp16: new KataGoWebGpuModel(device, parsedHalf, 11, true),
   };
 
@@ -263,7 +274,7 @@ async function main() {
 
   if (params.get('mode') === 'perf') return perf(device, parsed);
 
-  const report = { tier1: await tier1(device, parsed), tier2: await tier2(device, parsed, parsedHalf) };
+  const report = { ...await tier1(device, parsed), tier2: await tier2(device, parsed, parsedHalf) };
   await driver.report?.(report);
   log('done');
 }

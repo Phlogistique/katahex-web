@@ -53,6 +53,15 @@ for (const { id, worst, finite } of report.tier1) {
     `tier1 ${id}: ${worstOfAll.toExponential(2)}${finite ? '' : ' (non-finite output)'}`);
 }
 
+// -- weight storage --
+// Tier 1 ran the backend on exact weights; what ships stores them as f16 pairs.
+// This is what that rounding moves, worst over the four heads, against an
+// absolute limit like tier 1's rather than a frozen constant.
+judge(report.weights.length === 2, `weights checked at ${report.weights.length} board sizes`);
+for (const { size, worst } of report.weights) {
+  judge(worst <= 0.15, `f16 weights ${size}x${size}: worst ${worst.toExponential(2)} (limit 0.15)`);
+}
+
 // -- tier 2 --
 const m = report.tier2;
 if (calibrate) {

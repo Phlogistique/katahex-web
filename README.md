@@ -154,6 +154,15 @@ kernels for batchnorm+mish, residual adds, and KataGo's global pooling. The
 forward pass for a batch size compiles once into a flat list of dispatches
 with every shape baked into its shader.
 
+Weights sit in their buffers as f16 whatever the arithmetic reading them. The
+net the page is served is already an fp16 net, so for everything but the
+Winograd transformed filters and the folded batch norm those are the bits the
+file holds, and the f32 kernels read them back a pair at a time out of a `u32`
+with `unpack2x16float`, core WGSL that asks for no feature. At board 11 that is
+185 MB of weight buffers. Holding them at the compute width would be 369 MB on
+the single precision path, which is the path a device without `shader-f16`
+takes and so the one least likely to have the memory for them.
+
 Evaluations per second on 11x11, one sitting, each batch size measured on the
 way up the ladder and again on the way down and the two averaged, because the
 GPU throttles as the sweep heats it. One significant figure:
@@ -228,7 +237,12 @@ agrees with native to 1e-6 -- as goldens under `public/check/`.
   magnitude higher; nothing plausible lives in between. The same positions go
   through as one batch of 16, as 5+11, and alone -- batch shape must not
   change an answer (observed: bit-exact) -- and tiled to batch 48 against the
-  goldens, since each batch size compiles its own plan.
+  goldens, since each batch size compiles its own plan. Tier 1 runs the
+  backend on f32 weights, which no page runs: the f16 pairs the page holds
+  move the outputs by 6e-2, tens of times the tolerance, so the goldens would
+  be judging that rounding and nothing else. The rounding is judged on its
+  own, the model the page runs against the exact one over the same positions,
+  limit 0.15.
 - **Tier 2, fp16 accuracy**: fp16 against the live fp32 that tier 1 just
   pinned, over 512 stored positions, so fp32 stands in for the oracle at
   fp16's 0.05 error scale. Mean, p95 and max of the policy logit error, the
@@ -634,11 +648,12 @@ clock is involved.
 | fixed time | fp16 vs fp32, 1s a move | **0 elo [-73, +73]**, 12 of 24 decisive pairs, p = 1.000 |
 | search | fp16 at 400 visits vs fp16 at 100 | +232 elo [178, 298], 59 of 62 decisive pairs, p = 0.000 |
 
-**Half precision is worth nothing measurable at a fixed time budget, and the
-weights take 53 MB of device memory instead of 105.** That is the whole result:
-choose fp16 for the footprint, not for the strength. The download is the same
-either way -- `hex27x3.bin.gz` stores fp32, and `?fp32` only changes what the
-loader casts it to.
+**Half precision is worth nothing measurable at a fixed time budget.** That is
+the whole result: choose fp16 for the speed, not for the strength. Both paths
+store the same f16 weights, so what fp16 buys on top of them is the
+activations, half the size, and the throughput below. The download is the same
+either way, and so is what the weight buffers hold: `?fp32` changes the
+arithmetic and the activations, not the weights.
 
 Those games ran at 16 search threads with one leaf evaluation in flight each,
 which the driver took by accident: it posts to `engineWorker.ts` directly and so

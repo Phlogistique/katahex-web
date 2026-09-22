@@ -34,10 +34,13 @@ const TILES: { label: string; tile: MatmulTile }[] = [
 ];
 
 const ROUNDS = 5;
+/** Bytes an element of a, b and c takes: b is the weights, f16 either way. */
+const widths = (half: boolean) => [half ? 2 : 4, 2, half ? 2 : 4];
+
 const fits = (s: Shape, t: MatmulTile) => s.m % (t.wgY * t.rows) === 0 && s.k % t.tileK === 0;
 
 function pipeline(device: GPUDevice, half: boolean, s: Shape, tile: MatmulTile): GPUComputePipeline {
-  const code = matmulShader(half ? 'f16' : 'f32', s.m, s.n, s.k, tile);
+  const code = matmulShader(half ? 'f16' : 'f32', half ? 'f16' : 'u32', s.m, s.n, s.k, tile);
   return device.createComputePipeline({
     layout: 'auto',
     compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
@@ -63,17 +66,17 @@ async function verify(device: GPUDevice, half: boolean, tile: MatmulTile) {
   const width = half ? 2 : 4;
   const counts = [s.z * s.m * s.k, s.z * s.k * s.n, s.z * s.m * s.n];
   const buffers = counts.map((count, i) => device.createBuffer({
-    size: count * width,
+    size: count * widths(half)[i],
     usage: GPUBufferUsage.STORAGE | (i < 2 ? GPUBufferUsage.COPY_DST : GPUBufferUsage.COPY_SRC),
   }));
-  const fill = (count: number, at: (i: number) => number) => {
+  const fill = (count: number, at: (i: number) => number, f16: boolean) => {
     const values = Array.from({ length: count }, (_, i) => at(i));
-    return half ? new Uint16Array(values.map(toF16)) : new Float32Array(values);
+    return f16 ? new Uint16Array(values.map(toF16)) : new Float32Array(values);
   };
   device.queue.writeBuffer(buffers[0], 0, fill(counts[0],
-    (i) => aAt(Math.floor(i / (s.m * s.k)), Math.floor(i / s.k) % s.m, i % s.k)));
+    (i) => aAt(Math.floor(i / (s.m * s.k)), Math.floor(i / s.k) % s.m, i % s.k), half));
   device.queue.writeBuffer(buffers[1], 0, fill(counts[1],
-    (i) => bAt(Math.floor(i / (s.k * s.n)), Math.floor(i / s.n) % s.k, i % s.n)));
+    (i) => bAt(Math.floor(i / (s.k * s.n)), Math.floor(i / s.n) % s.k, i % s.n), true));
 
   const want = Array.from({ length: counts[2] }, (_, i) => {
     const z = Math.floor(i / (s.m * s.n)), r = Math.floor(i / s.n) % s.m, c = i % s.n;
@@ -137,7 +140,7 @@ async function run() {
     const usage = GPUBufferUsage.STORAGE;
     const jobs = (half ? [false, true] : [false]).flatMap((f) => SHAPES.map((s) => {
       const buffers = [s.z * s.m * s.k, s.z * s.k * s.n, s.z * s.m * s.n]
-        .map((count) => device.createBuffer({ size: count * (f ? 2 : 4), usage }));
+        .map((count, i) => device.createBuffer({ size: count * widths(f)[i], usage }));
       const runs = TILES.filter(({ tile }) => fits(s, tile)).map(({ label, tile }) => {
         const p = pipeline(device, f, s, tile);
         const bindGroup = device.createBindGroup({

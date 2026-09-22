@@ -57,6 +57,25 @@ function fromHalf(h: number): number {
     (exponent ? 2 ** (exponent - 15) * (1 + mantissa / 1024) : 2 ** -14 * (mantissa / 1024));
 }
 
+/**
+ * What a weight buffer holds. Weights are f16 whatever the arithmetic reading
+ * them: the net the page is served is already an fp16 net, so for everything
+ * but the Winograd-transformed filters and the folded batch norm these are the
+ * bits the file holds. Storing them at the compute width instead would double
+ * the buffers on the single precision path, which is the path a device without
+ * `shader-f16` takes and so the one least likely to have the memory for them.
+ * The f32 kernels read a pair back out of a `u32` with `unpack2x16float`,
+ * core WGSL that asks for no feature.
+ *
+ * `f32` is the reference `check.html` judges the backend against, where the
+ * weights have to be exact for the goldens to mean anything; nothing ships it.
+ */
+type WeightType = 'f16' | 'f32' | 'u32';
+
+/** One weight as f32, out of a buffer declared `array<wt>`. */
+const weightAt = (wt: WeightType, name: string, i: string) =>
+  wt === 'u32' ? `unpack2x16float(${name}[${i} / 2u])[${i} & 1u]` : `f32(${name}[${i}])`;
+
 // ---------------------------------------------------------------------------
 // Shaders
 
@@ -95,7 +114,7 @@ export function matmulTile(m: number, n: number, k: number): MatmulTile {
  * scope, which they have to be to survive the k loop; keep them there, since
  * this driver does not re-initialize a var declared inside a loop.
  */
-export function matmulShader(t: string, m: number, n: number, k: number,
+export function matmulShader(t: string, wt: WeightType, m: number, n: number, k: number,
                              tile: MatmulTile = matmulTile(m, n, k)): string {
   const { wgX, wgY, rows, cols4, tileK } = tile;
   const tileM = wgY * rows, threads = wgX * wgY;
@@ -111,6 +130,13 @@ export function matmulShader(t: string, m: number, n: number, k: number,
     throw new Error(`matmul ${m}x${n}x${k} does not tile`);
 
   const v4 = `vec4<${t}>`;
+  // b holds four weights per element however it stores them -- a vec4, or a
+  // vec2<u32> of the same four as f16 pairs -- so the indexing is the same
+  // either way and bTile keeps the compute width, and with it the budget above.
+  const bStore = wt === 'u32' ? 'array<vec2<u32>>' : `array<vec4<${wt}>>`;
+  const bLoad = wt === 'u32'
+    ? `let p = b[i]; return ${v4}(unpack2x16float(p.x), unpack2x16float(p.y));`
+    : `return ${v4}(b[i]);`;
   const list = <T>(count: number, f: (i: number) => T) => Array.from({ length: count }, (_, i) => f(i));
   const acc = (i: number, p: number) => `acc${i}_${p}`;
   const stage = (name: string, count: number, expr: string) =>
@@ -130,10 +156,12 @@ export function matmulShader(t: string, m: number, n: number, k: number,
 
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 @group(0) @binding(0) var<storage, read> a : array<${v4}>;
-@group(0) @binding(1) var<storage, read> b : array<${v4}>;
+@group(0) @binding(1) var<storage, read> b : ${bStore};
 @group(0) @binding(2) var<storage, read_write> c : array<${v4}>;
 var<workgroup> aTile : array<${v4}, ${aCount}>;
 var<workgroup> bTile : array<${v4}, ${bCount}>;
+
+fn bLoad(i : u32) -> ${v4} { ${bLoad} }
 
 @compute @workgroup_size(${wgX}, ${wgY})
 fn main(@builtin(local_invocation_id) lid : vec3<u32>,
@@ -149,7 +177,7 @@ ${list(rows, (i) => list(cols4, (p) => `  var ${acc(i, p)} = ${v4}();`).join('')
 
   for (var kb = 0u; kb < ${k4}u; kb += ${kq}u) {
 ${stage('aTile', aCount, `a[aOff + (idx / ${kq}u) * ${k4}u + kb + idx % ${kq}u]`).join('\n')}
-${stage('bTile', bCount, `b[bOff + (kb * 4u + idx / ${nq}u) * ${n4}u + idx % ${nq}u]`).join('\n')}
+${stage('bTile', bCount, `bLoad(bOff + (kb * 4u + idx / ${nq}u) * ${n4}u + idx % ${nq}u)`).join('\n')}
     workgroupBarrier();
 ${list(kq, step).flat().join('\n')}
     workgroupBarrier();
@@ -291,18 +319,19 @@ const ACT_WGSL: Record<ActivationKind, string> = {
 };
 
 /** y = act(x * scale[c] + bias[c]) over a whole [rows, cpad] buffer, math in f32. */
-function bnActShader(t: string, elems: number, cpad: number, act: ActivationKind): string {
+function bnActShader(t: string, wt: WeightType, elems: number, cpad: number,
+                     act: ActivationKind): string {
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 @group(0) @binding(0) var<storage, read> x : array<${t}>;
-@group(0) @binding(1) var<storage, read> scale : array<${t}>;
-@group(0) @binding(2) var<storage, read> bias : array<${t}>;
+@group(0) @binding(1) var<storage, read> scale : array<${wt}>;
+@group(0) @binding(2) var<storage, read> bias : array<${wt}>;
 @group(0) @binding(3) var<storage, read_write> out : array<${t}>;
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
   if (i >= ${elems}u) { return; }
   let c = i % ${cpad}u;
-  let v = f32(x[i]) * f32(scale[c]) + f32(bias[c]);
+  let v = f32(x[i]) * ${weightAt(wt, 'scale', 'c')} + ${weightAt(wt, 'bias', 'c')};
   ${ACT_WGSL[act]}
   out[i] = ${t}(y);
 }`;
@@ -459,6 +488,7 @@ export class KataGoWebGpuModel {
   private readonly size: number;
   private readonly half: boolean;
   private readonly t: string;
+  private readonly wt: WeightType;
   private readonly width: number;
   private readonly weights = new Map<string, GPUBuffer>();
   private readonly pipelines = new Map<string, GPUComputePipeline>();
@@ -485,13 +515,20 @@ export class KataGoWebGpuModel {
    * (timestamps are quantized to uselessness otherwise). */
   profile = false;
 
-  constructor(device: GPUDevice, parsed: ParsedKataGoModelV8, size: number, half: boolean) {
+  /**
+   * `half` is the arithmetic and the activations. Weights are f16 whatever it
+   * is; `fullWeights` keeps them f32 instead, which is the reference the
+   * accuracy gate judges against and which nothing ships.
+   */
+  constructor(device: GPUDevice, parsed: ParsedKataGoModelV8, size: number, half: boolean,
+              fullWeights = false) {
     if (parsed.metaEncoderVersion !== 0) throw new Error('meta encoder not supported');
     this.device = device;
     this.parsed = parsed;
     this.size = size;
     this.half = half;
     this.t = half ? 'f16' : 'f32';
+    this.wt = half ? 'f16' : fullWeights ? 'f32' : 'u32';
     this.width = half ? 2 : 4;
     this.uploadWeights();
   }
@@ -506,13 +543,16 @@ export class KataGoWebGpuModel {
   }
 
   private upload(name: string, data: Float32Array): void {
-    const device = this.half ? Uint16Array.from(data, toHalf) : data;
+    // The u32 kernels read these back two at a time, so every array has to be
+    // a whole number of pairs; padding to 16 channels is what makes them one.
+    if (data.length % 2) throw new Error(`${name}: ${data.length} weights is not pairs`);
+    const stored = this.wt === 'f32' ? data : Uint16Array.from(data, toHalf);
     const buffer = this.buffer({
       label: name,
-      size: device.byteLength,
+      size: stored.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    this.device.queue.writeBuffer(buffer, 0, device as Uint16Array<ArrayBuffer> | Float32Array<ArrayBuffer>);
+    this.device.queue.writeBuffer(buffer, 0, stored as Uint16Array<ArrayBuffer> | Float32Array<ArrayBuffer>);
     this.weights.set(name, buffer);
   }
 
@@ -605,6 +645,7 @@ export class KataGoWebGpuModel {
   private buildPlan(batch: number): Plan {
     const device = this.device;
     const t = this.t;
+    const wt = this.wt;
     const size = this.size;
     const hw = size * size;
     const rows = batch * hw;
@@ -666,7 +707,7 @@ export class KataGoWebGpuModel {
       const npad = padC(nOut);
       const out = acquire(x.rows, x.rowsPad, npad);
       run(`matmul ${x.rowsPad}x${npad}x${x.cpad}`,
-          this.pipeline(matmulShader(t, x.rowsPad, npad, x.cpad), 'main'),
+          this.pipeline(matmulShader(t, wt, x.rowsPad, npad, x.cpad), 'main'),
           [x.buffer, this.weight(weightName), out.buffer],
           [...grid(x.rowsPad, npad, x.cpad), 1]);
       return out;
@@ -681,7 +722,7 @@ export class KataGoWebGpuModel {
           [x.buffer, v.buffer], [Math.ceil(x.cpad / 64), wRows, 1]);
       const mm = acquire(36 * wRowsPad, 36 * wRowsPad, npad);
       run(`wino-matmul 36x${wRowsPad}x${npad}x${x.cpad}`,
-          this.pipeline(matmulShader(t, wRowsPad, npad, x.cpad), 'main'),
+          this.pipeline(matmulShader(t, wt, wRowsPad, npad, x.cpad), 'main'),
           [v.buffer, this.weight(weightName), mm.buffer],
           [...grid(wRowsPad, npad, x.cpad), 36]);
       release(v);
@@ -699,7 +740,7 @@ export class KataGoWebGpuModel {
     const bnAct = (x: Tensor, bnName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, wt, elems, x.cpad, kind), 'main'),
           [x.buffer, this.weight(`${bnName}.scale`), this.weight(`${bnName}.bias`), out.buffer],
           [Math.ceil(elems / 256), 1, 1]);
       return out;
@@ -709,7 +750,7 @@ export class KataGoWebGpuModel {
     const biasAct = (x: Tensor, biasName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, wt, elems, x.cpad, kind), 'main'),
           [x.buffer, this.weight('ones'), this.weight(biasName), out.buffer],
           [Math.ceil(elems / 256), 1, 1]);
       return out;
