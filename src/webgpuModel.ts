@@ -67,14 +67,17 @@ function fromHalf(h: number): number {
  * The f32 kernels read a pair back out of a `u32` with `unpack2x16float`,
  * core WGSL that asks for no feature.
  *
+ * What `bnActShader` reads stays f32: the folded batch norm, and the head
+ * biases that go through the same kernel. They are under a thousandth of the
+ * weight bytes, and the batch norm is what the weight file goes out of its way
+ * to keep at full precision (see `scripts/export_net.py`), so rounding it
+ * costs accuracy and buys nothing. That leaves the matmul's `b` as the only
+ * packed read.
+ *
  * `f32` is the reference `check.html` judges the backend against, where the
  * weights have to be exact for the goldens to mean anything; nothing ships it.
  */
 type WeightType = 'f16' | 'f32' | 'u32';
-
-/** One weight as f32, out of a buffer declared `array<wt>`. */
-const weightAt = (wt: WeightType, name: string, i: string) =>
-  wt === 'u32' ? `unpack2x16float(${name}[${i} / 2u])[${i} & 1u]` : `f32(${name}[${i}])`;
 
 // ---------------------------------------------------------------------------
 // Shaders
@@ -319,19 +322,18 @@ const ACT_WGSL: Record<ActivationKind, string> = {
 };
 
 /** y = act(x * scale[c] + bias[c]) over a whole [rows, cpad] buffer, math in f32. */
-function bnActShader(t: string, wt: WeightType, elems: number, cpad: number,
-                     act: ActivationKind): string {
+function bnActShader(t: string, elems: number, cpad: number, act: ActivationKind): string {
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 @group(0) @binding(0) var<storage, read> x : array<${t}>;
-@group(0) @binding(1) var<storage, read> scale : array<${wt}>;
-@group(0) @binding(2) var<storage, read> bias : array<${wt}>;
+@group(0) @binding(1) var<storage, read> scale : array<f32>;
+@group(0) @binding(2) var<storage, read> bias : array<f32>;
 @group(0) @binding(3) var<storage, read_write> out : array<${t}>;
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
   if (i >= ${elems}u) { return; }
   let c = i % ${cpad}u;
-  let v = f32(x[i]) * ${weightAt(wt, 'scale', 'c')} + ${weightAt(wt, 'bias', 'c')};
+  let v = f32(x[i]) * scale[c] + bias[c];
   ${ACT_WGSL[act]}
   out[i] = ${t}(y);
 }`;
@@ -542,11 +544,11 @@ export class KataGoWebGpuModel {
     return this.device.createBuffer(descriptor);
   }
 
-  private upload(name: string, data: Float32Array): void {
+  private upload(name: string, data: Float32Array, wt: WeightType = this.wt): void {
     // The u32 kernels read these back two at a time, so every array has to be
     // a whole number of pairs; padding to 16 channels is what makes them one.
     if (data.length % 2) throw new Error(`${name}: ${data.length} weights is not pairs`);
-    const stored = this.wt === 'f32' ? data : Uint16Array.from(data, toHalf);
+    const stored = wt === 'f32' ? data : Uint16Array.from(data, toHalf);
     const buffer = this.buffer({
       label: name,
       size: stored.byteLength,
@@ -571,8 +573,8 @@ export class KataGoWebGpuModel {
   }
 
   private uploadBn(name: string, bn: ParsedBatchNorm): void {
-    this.upload(`${name}.scale`, padVector(bn.mergedScale, bn.channels));
-    this.upload(`${name}.bias`, padVector(bn.mergedBias, bn.channels));
+    this.upload(`${name}.scale`, padVector(bn.mergedScale, bn.channels), 'f32');
+    this.upload(`${name}.bias`, padVector(bn.mergedBias, bn.channels), 'f32');
   }
 
   private uploadBlock(name: string, block: ParsedTrunkBlock): void {
@@ -612,13 +614,13 @@ export class KataGoWebGpuModel {
     this.uploadConv('v1', value.v1);
     this.uploadBn('v1bn', value.v1BN);
     this.uploadMatMul('v2', value.v2);
-    this.upload('v2.bias', padVector(value.v2Bias.weights, value.v2Bias.channels));
+    this.upload('v2.bias', padVector(value.v2Bias.weights, value.v2Bias.channels), 'f32');
     this.uploadMatMul('v3', value.v3);
-    this.upload('v3.bias', padVector(value.v3Bias.weights, value.v3Bias.channels));
+    this.upload('v3.bias', padVector(value.v3Bias.weights, value.v3Bias.channels), 'f32');
     this.uploadMatMul('sv3', value.sv3);
-    this.upload('sv3.bias', padVector(value.sv3Bias.weights, value.sv3Bias.channels));
+    this.upload('sv3.bias', padVector(value.sv3Bias.weights, value.sv3Bias.channels), 'f32');
     // Identity scale for plain bias+activation steps, wide enough for any head.
-    this.upload('ones', new Float32Array(padC(value.v2Bias.channels)).fill(1));
+    this.upload('ones', new Float32Array(padC(value.v2Bias.channels)).fill(1), 'f32');
   }
 
   private weight(name: string): GPUBuffer {
@@ -740,7 +742,7 @@ export class KataGoWebGpuModel {
     const bnAct = (x: Tensor, bnName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, wt, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
           [x.buffer, this.weight(`${bnName}.scale`), this.weight(`${bnName}.bias`), out.buffer],
           [Math.ceil(elems / 256), 1, 1]);
       return out;
@@ -750,7 +752,7 @@ export class KataGoWebGpuModel {
     const biasAct = (x: Tensor, biasName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, wt, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
           [x.buffer, this.weight('ones'), this.weight(biasName), out.buffer],
           [Math.ceil(elems / 256), 1, 1]);
       return out;

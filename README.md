@@ -156,12 +156,20 @@ with every shape baked into its shader.
 
 Weights sit in their buffers as f16 whatever the arithmetic reading them. The
 net the page is served is already an fp16 net, so for everything but the
-Winograd transformed filters and the folded batch norm those are the bits the
-file holds, and the f32 kernels read them back a pair at a time out of a `u32`
-with `unpack2x16float`, core WGSL that asks for no feature. At board 11 that is
-185 MB of weight buffers. Holding them at the compute width would be 369 MB on
-the single precision path, which is the path a device without `shader-f16`
-takes and so the one least likely to have the memory for them.
+Winograd transformed filters those are the bits the file holds, and the f32
+kernels read them back a pair at a time out of a `u32` with `unpack2x16float`,
+core WGSL that asks for no feature. At board 11 that is 185 MB of weight
+buffers. Holding them at the compute width would be 369 MB on the single
+precision path, which is the path a device without `shader-f16` takes and so
+the one least likely to have the memory for them.
+
+The transformed filters are 97% of those bytes and the whole of what the
+rounding costs: the transform multiplies its taps by 1/6 and 1/24, so what
+comes out is not an f16 number whatever went in. The folded batch norm is
+under a thousandth of the bytes and stays f32, the precision `export_net.py`
+keeps in the file for it. What is left is 0.005 mean policy logit error over
+the 512-position bank against the same net at full weight precision, and no
+top-1 move changed in 512; half precision, for scale, is 0.045.
 
 Evaluations per second on 11x11, one sitting, each batch size measured on the
 way up the ladder and again on the way down and the two averaged, because the
@@ -239,7 +247,7 @@ agrees with native to 1e-6 -- as goldens under `public/check/`.
   change an answer (observed: bit-exact) -- and tiled to batch 48 against the
   goldens, since each batch size compiles its own plan. Tier 1 runs the
   backend on f32 weights, which no page runs: the f16 pairs the page holds
-  move the outputs by 6e-2, tens of times the tolerance, so the goldens would
+  move the outputs by 5e-2, tens of times the tolerance, so the goldens would
   be judging that rounding and nothing else. The rounding is judged on its
   own, the model the page runs against the exact one over the same positions,
   limit 0.15.
