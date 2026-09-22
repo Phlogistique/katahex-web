@@ -465,6 +465,14 @@ export class KataGoWebGpuModel {
   private readonly plans = new Map<number, Plan>();
   private readonly activations: GPUBuffer[] = [];
 
+  /**
+   * What this model has asked the GPU for, and the batch it was last asked to
+   * evaluate. A device that dies on a phone says only that it died, so these
+   * are what the report has instead.
+   */
+  readonly allocated = { bytes: 0, buffers: 0 };
+  lastBatch = 0;
+
   /** Wall time spent in each stage of evaluate, cumulative nanoseconds. With
    * two evaluations in flight the gpu spans overlap, so they can sum past the
    * wall clock; read them from a run with one. */
@@ -490,9 +498,16 @@ export class KataGoWebGpuModel {
 
   // -- weights --------------------------------------------------------------
 
+  /** Every buffer goes through here, so `allocated` is all of them. */
+  private buffer(descriptor: GPUBufferDescriptor): GPUBuffer {
+    this.allocated.bytes += descriptor.size;
+    this.allocated.buffers += 1;
+    return this.device.createBuffer(descriptor);
+  }
+
   private upload(name: string, data: Float32Array): void {
     const device = this.half ? Uint16Array.from(data, toHalf) : data;
-    const buffer = this.device.createBuffer({
+    const buffer = this.buffer({
       label: name,
       size: device.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -612,7 +627,7 @@ export class KataGoWebGpuModel {
       const free = pool.get(key) ?? [];
       let buffer = free.pop();
       if (!buffer) {
-        buffer = device.createBuffer({
+        buffer = this.buffer({
           label: `act ${key}`,
           size: rPad * cpad * this.width,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
@@ -849,6 +864,7 @@ export class KataGoWebGpuModel {
    * [batch, numInputGlobalChannels], both float32 whatever the compute type.
    */
   async evaluate(spatial: Float32Array, global: Float32Array, batch: number): Promise<NetOutputs> {
+    this.lastBatch = batch;
     const plan = this.plan(batch);
     const hw = this.size * this.size;
     const cin = this.parsed.numInputChannels;
@@ -953,16 +969,16 @@ export class KataGoWebGpuModel {
   }
 
   private makeReadout(plan: Plan): Readout {
-    const readback = this.device.createBuffer({
+    const readback = this.buffer({
       size: plan.readbackSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
     if (!this.profile || !this.device.features.has('timestamp-query')) return { readback };
     const stamps = 2 * plan.passes.length;
     return {
       readback,
       querySet: this.device.createQuerySet({ type: 'timestamp', count: stamps }),
-      queryResolve: this.device.createBuffer({
+      queryResolve: this.buffer({
         size: 8 * stamps, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
-      queryReadback: this.device.createBuffer({
+      queryReadback: this.buffer({
         size: 8 * stamps, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }),
     };
   }

@@ -32,11 +32,18 @@ const NUM_ANALYSIS_THREADS = 2;
 const post = (message: FromEngine) => self.postMessage(message);
 
 /**
+ * Everything in flight when the device dies fails too, each naming whichever
+ * buffer it happened to touch, and the banner keeps only the last message.
+ */
+let silenced = false;
+
+/**
  * The message goes on the page, where 120 characters of it are read by someone
  * who cannot open a console; the stack goes to the log, where it is minified
  * and only useful next to a source map.
  */
 const fail = (error: unknown) => {
+  if (silenced) return;
   const stack = (error as Error)?.stack;
   if (stack) post({ kind: 'log', line: stack });
   post({ kind: 'error', message: String((error as Error)?.message ?? error) });
@@ -44,6 +51,21 @@ const fail = (error: unknown) => {
 
 /** Its UA is the only one with a real `Gecko/<date>`; Chrome's says "like Gecko". */
 const FIREFOX = /Gecko\/\d/.test(navigator.userAgent);
+
+/**
+ * Names the GPU, for the banner and for the error that follows it. A phone
+ * report is a photograph of the screen, so whatever the adapter will say has to
+ * be in the text. `info` is the current spelling, `requestAdapterInfo` the one
+ * Chrome shipped first; browsers mask the fields they consider fingerprinting,
+ * so any of them may be empty.
+ */
+async function describeAdapter(gpu: GPUAdapter): Promise<string> {
+  type Legacy = { info?: GPUAdapterInfo; requestAdapterInfo?: () => Promise<GPUAdapterInfo> };
+  const legacy = gpu as GPUAdapter & Legacy;
+  const info = legacy.info ?? await legacy.requestAdapterInfo?.();
+  const named = [info?.vendor, info?.architecture].filter(Boolean).join(' ');
+  return named || info?.description || 'an unnamed GPU';
+}
 
 /**
  * Reads the body a piece at a time so the wait can be reported: this is 49 MB,
@@ -142,7 +164,39 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   if (profile && gpu.features.has('timestamp-query')) wanted.push('timestamp-query');
   const device = await gpu.requestDevice({ requiredFeatures: wanted });
   if (!device) throw new Error('WebGPU gave no device');
-  if (half && !useHalf) say('no shader-f16 on this GPU, running single precision');
+
+  const adapter = await describeAdapter(gpu);
+  if (half && !useHalf) say(`no shader-f16 on ${adapter}, running single precision`);
+
+  // A GPU process that goes down takes the device with it, and the page hears
+  // about it as some later call failing on an object whose instance is gone --
+  // "A valid external Instance reference no longer exists", which names a buffer
+  // that was never the problem.
+  //
+  // What the device says for itself is only "GPU connection lost", the same
+  // whether the process was killed for its memory or reset after a hang, so the
+  // message carries how much had been asked for and how wide a batch was running
+  // when it went. The banner truncates at 120 characters: keep it short, and
+  // keep the fixed part first.
+  let model: KataGoWebGpuModel | null = null;
+  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const state = () => [
+    model ? `${(model.allocated.bytes / 2 ** 20).toFixed(0)} MB` : 'net not uploaded',
+    model?.lastBatch ? `batch ${model.lastBatch}` : null,
+    memory ? `${memory} GB RAM` : null,
+    adapter,
+  ].filter(Boolean).join(', ');
+
+  // Nothing is reported after this: the evaluations still in flight are about to
+  // fail as well, each naming whichever buffer it happened to touch.
+  void device.lost.then((lost) => {
+    fail(new Error(`GPU device lost (${state()}): ${lost.message}`));
+    silenced = true;
+  });
+
+  device.addEventListener('uncapturederror', (event) => {
+    fail(new Error(`GPU rejected the net (${state()}): ${(event as GPUUncapturedErrorEvent).error.message}`));
+  });
 
   // Two weight files, because the two readers want different things out of one
   // net: the engine only ever reads its name, version and channel counts -- this
@@ -179,7 +233,7 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   say('reading the net');
   const parsed = parseKataGoModelV8(raw);
   say('sending the net to the GPU');
-  const model = new KataGoWebGpuModel(device, parsed, boardSize, useHalf);
+  model = new KataGoWebGpuModel(device, parsed, boardSize, useHalf);
   model.profile = profile;
 
   // Answer evaluations for as long as the worker lives; the engine is stopped
