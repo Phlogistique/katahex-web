@@ -507,7 +507,7 @@ and the JS backend below; it is a git subtree, squashed, of
 https://github.com/selinger/katahex.
 
 `scripts/build-engine.sh` cross-compiles it to WebAssembly and stages the result
-in `public-web/`. 1.6 MB of wasm.
+in `public-web/`. 1.8 MB of wasm.
 
 `BACKEND=EIGEN` builds the engine with the net on the wasm CPU. It works and
 answers analysis queries, at roughly a third of the speed of the same engine
