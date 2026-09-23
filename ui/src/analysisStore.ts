@@ -13,16 +13,17 @@ export const FLOOR = 200;
  * The net the numbers were computed with, which has to be the one Engine.java loads. A different
  * net answers differently, so it does not get to read this.
  */
-const STORE = 'analysisCache-hex27x3';
+const STORE = 'analysisCache-hex27x3-v2';
 
-/** The stores from before the depths were merged, which carried theirs in the name. */
-const OLD_STORES: Record<string, number> = {
-    'analysisCache': 1,
-    'analysisCache-1v': 1,
-    'analysisCache-200v': 200,
-    'analysisCache-1000v': 1000,
-    'analysisCache-live': 200,
-};
+/** Earlier stores, removed rather than read: they may hold analyses saved under another position's key. */
+const OLD_STORES = [
+    'analysisCache',
+    'analysisCache-1v',
+    'analysisCache-200v',
+    'analysisCache-1000v',
+    'analysisCache-live',
+    'analysisCache-hex27x3',
+];
 
 /** What is known about one position, each half at the deepest search that produced it. */
 type Entry = {
@@ -157,18 +158,7 @@ class AnalysisStore
     {
         this.entries = JSON.parse(localStorage?.getItem(STORE) ?? 'null') ?? {};
 
-        for (const [name, visits] of Object.entries(OLD_STORES)) {
-            const raw = localStorage?.getItem(name);
-
-            if (raw === null || raw === undefined) {
-                continue;
-            }
-
-            for (const [key, output] of Object.entries(JSON.parse(raw) as Record<string, AnalysisOutput>)) {
-                this.writeEval(key, output.whiteWin, visits);
-                this.writePolicy(key, output.policy, visits);
-            }
-
+        for (const name of OLD_STORES) {
             localStorage?.removeItem(name);
         }
     }
