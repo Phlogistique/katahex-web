@@ -99,6 +99,12 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
+      // The worker's file name hashes its code, so after a deploy that changed it, the next board
+      // size change asks for a file that is gone: a plain Event. An ErrorEvent was thrown inside
+      // the worker, and reporting it would replace the engine's own, more useful line in the banner.
+      worker.onerror = (event) => {
+        if (!(event instanceof ErrorEvent)) host.onEngineLog?.('engine error: it failed to load, reloading the page may help');
+      };
       send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, leafEvals, profile, enginePath, modelPath, shapePath });
     },
 

@@ -44,8 +44,8 @@ fi
 # -include endian.h: numpywrite.cpp and sha2.cpp expect BYTE_ORDER from
 # <sys/types.h>, which musl does not define there.
 #
-# -fwasm-exceptions: without it every C++ throw aborts the whole module,
-# including the ones the engine catches to answer a bad query with an error.
+# -fwasm-exceptions: without it every C++ throw calls abort(), which stops the
+# thread that threw, even the throws the engine catches to answer a bad query.
 #
 # MODULARIZE and INVOKE_RUN=0 hand the caller a factory instead of running main
 # on load, so the net can be set up before the engine does anything.

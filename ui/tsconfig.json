@@ -25,8 +25,8 @@
       "@playhex/pixi-board": ["./src/shared/pixi-board/index.ts"],
       "vue-router": ["./src/stubs/vue-router.ts"],
       "@unhead/vue": ["./src/stubs/unhead.ts"],
-      // The engine bridge and the WebGPU net, which are checked by their own project.
-      "@engine/*": ["../../katahex-web/src/*"]
+      // The engine bridge and the WebGPU net.
+      "@engine/*": ["../src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "src/**/*.d.ts", "vite.config.ts"],
