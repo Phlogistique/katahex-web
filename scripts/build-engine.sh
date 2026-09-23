@@ -44,6 +44,9 @@ fi
 # -include endian.h: numpywrite.cpp and sha2.cpp expect BYTE_ORDER from
 # <sys/types.h>, which musl does not define there.
 #
+# -fwasm-exceptions: without it every C++ throw calls abort(), which stops the
+# thread that threw, even the throws the engine catches to answer a bad query.
+#
 # MODULARIZE and INVOKE_RUN=0 hand the caller a factory instead of running main
 # on load, so the net can be set up before the engine does anything.
 #
@@ -58,8 +61,8 @@ emcmake cmake -S "$KATAHEX/cpp" -B "$BUILD" \
   -DCMAKE_PREFIX_PATH="$EIGEN" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
   -DZLIB_INCLUDE_DIR="$SYSROOT/include" \
   -DZLIB_LIBRARY="$SYSROOT/lib/wasm32-emscripten/libz.a" \
-  -DCMAKE_CXX_FLAGS="-pthread -msimd128 -include endian.h -g0 $CXXEXTRA" \
-  -DCMAKE_EXE_LINKER_FLAGS="-pthread -O3 -g0 \
+  -DCMAKE_CXX_FLAGS="-pthread -msimd128 -fwasm-exceptions -include endian.h -g0 $CXXEXTRA" \
+  -DCMAKE_EXE_LINKER_FLAGS="-pthread -fwasm-exceptions -O3 -g0 \
     -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB -sSTACK_SIZE=8MB \
     -sPTHREAD_POOL_SIZE=$POOL -sEXIT_RUNTIME=1 \
     -sMODULARIZE=1 -sINVOKE_RUN=0 $PROXY \
