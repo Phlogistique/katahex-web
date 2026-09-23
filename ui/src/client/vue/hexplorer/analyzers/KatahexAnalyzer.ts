@@ -122,7 +122,11 @@ export class KatahexAnalyzer implements AnalyzerInterface
             // Our own re-read after a partial result: answer with the search as it stands.
             const searched = await this.searchedSoFar(this.refreshing ? 1 : this.floor);
 
+<<<<<<< HEAD
             // Moved away from while waiting: the search running now is another position's.
+=======
+            // Moved away from while waiting: `searched` may be another position's now.
+>>>>>>> origin/main
             if (!this.isDisplayed(input)) {
                 return analysisStore.read(input) ?? {};
             }
@@ -233,8 +237,8 @@ export class KatahexAnalyzer implements AnalyzerInterface
         }
 
         // Nothing is going to grow: answer with whatever there is, rather than leaving
-        // hexplorer waiting on an analysis that will never arrive. In the background it will
-        // grow once the app is back, and auto-play must not move on a search cut short.
+        // hexplorer waiting on an analysis that will never arrive. In the background it is
+        // searched again once the app is back, so the answer waits for that.
         if (!this.hasSearchToDo()) {
             return Promise.resolve(this.searched);
         }

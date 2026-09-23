@@ -12,6 +12,7 @@ import { noteNetStats } from './engineSpeed.js';
 // ?leaves=N lets each search thread keep N leaf evals in flight;
 // ?profile times every GPU dispatch into window.engineStats.kernels.
 const options = new URLSearchParams(location.search);
+const numberOption = (name: string) => options.has(name) ? Number(options.get(name)) : undefined;
 
 const status = (text: string) => {
     const line = document.getElementById('engine-status');
@@ -77,10 +78,10 @@ if (!crossOriginIsolated) {
 
     installWasmEngine({
         half: !options.has('fp32'),
-        searchThreads: Number(options.get('threads')) || undefined,
-        batchWaitMicros: Number(options.get('batchwait')) || undefined,
-        serverThreads: Number(options.get('servers')) || undefined,
-        leafEvals: Number(options.get('leaves')) || undefined,
+        searchThreads: numberOption('threads'),
+        batchWaitMicros: numberOption('batchwait'),
+        serverThreads: numberOption('servers'),
+        leafEvals: numberOption('leaves'),
         profile: options.has('profile'),
         // Cumulative net counters: the sidebar's speed readout, and readable from
         // the console or a benchmark harness.
