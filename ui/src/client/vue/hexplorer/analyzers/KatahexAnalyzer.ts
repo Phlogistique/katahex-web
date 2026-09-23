@@ -122,11 +122,7 @@ export class KatahexAnalyzer implements AnalyzerInterface
             // Our own re-read after a partial result: answer with the search as it stands.
             const searched = await this.searchedSoFar(this.refreshing ? 1 : this.floor);
 
-<<<<<<< HEAD
-            // Moved away from while waiting: the search running now is another position's.
-=======
             // Moved away from while waiting: `searched` may be another position's now.
->>>>>>> origin/main
             if (!this.isDisplayed(input)) {
                 return analysisStore.read(input) ?? {};
             }
