@@ -258,7 +258,7 @@ class Engine {
 
         if (size !== this.size) {
             // log() sends what is pending and live again once the engine is up, but it was asked
-            // at the old size: the new net buffers would evaluate it wrongly, or abort on a bigger board.
+            // at the old size, which the restarted engine's net buffers do not fit.
             this.abortPending();
             this.unwatch();
             this.size = size;
