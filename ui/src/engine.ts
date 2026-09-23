@@ -66,7 +66,7 @@ const ENDLESS = 100000000;
 export const MIN_BOARD_SIZE = 2;
 export const MAX_BOARD_SIZE = 19;
 
-/** Rejection of a search dropped before it answered, so the position on screen can be searched. */
+/** Rejection of a search dropped before it answered: the position on screen took the engine, or the board size changed. */
 export class SearchAborted extends Error
 {
     constructor() {
@@ -257,6 +257,10 @@ class Engine {
         }
 
         if (size !== this.size) {
+            // log() sends what is pending and live again once the engine is up, but it was asked
+            // at the old size, which the restarted engine's net buffers do not fit.
+            this.abortPending();
+            this.unwatch();
             this.size = size;
             this.ready = false;
             this.onStatus(`starting engine for ${size}×${size}…`, false);
