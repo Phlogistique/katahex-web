@@ -257,6 +257,10 @@ class Engine {
         }
 
         if (size !== this.size) {
+            // What is in flight was asked at the old size. The restarted engine would evaluate
+            // it with net buffers of the new one, or abort on a board bigger than they are.
+            this.abortPending();
+            this.unwatch();
             this.size = size;
             this.ready = false;
             this.onStatus(`starting engine for ${size}×${size}…`, false);
