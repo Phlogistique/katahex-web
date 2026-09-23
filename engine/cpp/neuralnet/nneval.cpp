@@ -449,8 +449,8 @@ void NNEvaluator::serve(
     if(isKilled)
       break;
 
-    //Another server thread took the batch while this one waited for it to fill,
-    //leaving nothing, or only the first rows of the next one.
+    //Another server thread took the batch while this one waited for it to fill:
+    //start over on what is queued now.
     if(m_oldestResultBufsIdx != batchIdx)
       continue;
 
