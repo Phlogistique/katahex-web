@@ -182,6 +182,12 @@ export class KatahexAnalyzer implements AnalyzerInterface
 
     private isSearching(): boolean
     {
+        return this.awake && this.hasSearchToDo();
+    }
+
+    /** Whether the position on screen still needs searching, now or once the app is back. */
+    private hasSearchToDo(): boolean
+    {
         if (!this.displayed || this.maxVisits < 1 || !engine.available) {
             return false;
         }
@@ -192,7 +198,7 @@ export class KatahexAnalyzer implements AnalyzerInterface
             return false;
         }
 
-        return this.awake && !this.paused.value;
+        return !this.paused.value;
     }
 
     private sync(): void
@@ -227,8 +233,9 @@ export class KatahexAnalyzer implements AnalyzerInterface
         }
 
         // Nothing is going to grow: answer with whatever there is, rather than leaving
-        // hexplorer waiting on an analysis that will never arrive.
-        if (!this.isSearching()) {
+        // hexplorer waiting on an analysis that will never arrive. In the background it is
+        // searched again once the app is back, so the answer waits for that.
+        if (!this.hasSearchToDo()) {
             return Promise.resolve(this.searched);
         }
 
@@ -257,7 +264,7 @@ export class KatahexAnalyzer implements AnalyzerInterface
                 return false;
             }
 
-            if (!this.isSearching()) {
+            if (!this.hasSearchToDo()) {
                 waiter.resolve(this.searched);
                 return false;
             }
