@@ -99,12 +99,13 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'stats') onStats?.(data.stats);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
-      // The worker is a file whose name changes with every deploy, and it is started again on
-      // every board size change, so a page opened before a deploy asks for a file that is gone.
-      // That failure is a plain Event, with no message.
-      worker.onerror = (event) => host.onEngineLog?.(event instanceof ErrorEvent
-        ? `engine error: ${event.message}`
-        : 'engine error: it failed to load, reloading the page may help');
+      // The worker's file name is a hash of its code, and it is started again on every board
+      // size change, so a page opened before a deploy that changed it asks for a file that is
+      // gone. That failure is a plain Event. An ErrorEvent is an error thrown inside the worker,
+      // which the engine has already printed, more usefully than this could.
+      worker.onerror = (event) => {
+        if (!(event instanceof ErrorEvent)) host.onEngineLog?.('engine error: it failed to load, reloading the page may help');
+      };
       send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, leafEvals, profile, enginePath, modelPath, shapePath });
     },
 
