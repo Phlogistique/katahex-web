@@ -437,9 +437,10 @@ void NNEvaluator::serve(
     //A partial batch is usually the tail of one the last run split off, and the
     //rest of it is a few milliseconds behind; running the whole batch at once is
     //worth far more GPU time than this waits.
+    const int batchIdx = m_oldestResultBufsIdx;
     if(serveBatchWaitMicros > 0) {
       auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(serveBatchWaitMicros);
-      while(m_currentResultBufsLen < maxNumRows && m_currentResultBufsIdx == m_oldestResultBufsIdx && !isKilled) {
+      while(m_oldestResultBufsIdx == batchIdx && m_currentResultBufsLen < maxNumRows && m_currentResultBufsIdx == m_oldestResultBufsIdx && !isKilled) {
         if(serverWaitingForBatchStart.wait_until(lock,deadline) == std::cv_status::timeout)
           break;
       }
@@ -447,6 +448,11 @@ void NNEvaluator::serve(
 
     if(isKilled)
       break;
+
+    //Another server thread took the batch while this one waited for it to fill:
+    //start over on what is queued now.
+    if(m_oldestResultBufsIdx != batchIdx)
+      continue;
 
     std::swap(m_resultBufss[m_oldestResultBufsIdx],buf.resultBufs);
 
