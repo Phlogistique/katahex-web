@@ -83,7 +83,7 @@ export class KatahexAnalyzer implements AnalyzerInterface
      */
     setDisplayedPosition(input: AnalysisInput | null): void
     {
-        if (input && this.displayed && analysisCacheKey(input) === analysisCacheKey(this.displayed)) {
+        if (input && this.isDisplayed(input)) {
             return;
         }
 
@@ -118,9 +118,14 @@ export class KatahexAnalyzer implements AnalyzerInterface
             return {};
         }
 
-        if (this.displayed && analysisCacheKey(input) === analysisCacheKey(this.displayed)) {
+        if (this.isDisplayed(input)) {
             // Our own re-read after a partial result: answer with the search as it stands.
             const searched = await this.searchedSoFar(this.refreshing ? 1 : this.floor);
+
+            // Moved away from while waiting: the search running now is another position's.
+            if (!this.isDisplayed(input)) {
+                return analysisStore.read(input) ?? {};
+            }
 
             if (searched) {
                 analysisStore.write(input, searched);
@@ -168,6 +173,11 @@ export class KatahexAnalyzer implements AnalyzerInterface
     private get floor(): number
     {
         return Math.min(this.maxVisits, FLOOR);
+    }
+
+    private isDisplayed(input: AnalysisInput): boolean
+    {
+        return !!this.displayed && analysisCacheKey(input) === analysisCacheKey(this.displayed);
     }
 
     private isSearching(): boolean
