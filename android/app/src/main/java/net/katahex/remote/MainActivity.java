@@ -46,6 +46,7 @@ public class MainActivity extends Activity implements RemoteEngine.Listener {
     private RemoteEngine engine;
     private boolean resumed;
     private boolean quit;
+    private boolean destroyed;
 
     private final Runnable pinger = new Runnable() {
         @Override
@@ -144,6 +145,7 @@ public class MainActivity extends Activity implements RemoteEngine.Listener {
             // Best effort: the process may not live long enough, and the switch covers that.
             engine.quit(() -> {});
         }
+        destroyed = true;
         web.destroy();
         super.onDestroy();
     }
@@ -157,7 +159,11 @@ public class MainActivity extends Activity implements RemoteEngine.Listener {
 
     @Override
     public void onInfo(String text) {
-        main.post(() -> bar.setText(text));
+        main.post(() -> {
+            if (!destroyed) {
+                bar.setText(text);
+            }
+        });
     }
 
     @Override
@@ -172,7 +178,11 @@ public class MainActivity extends Activity implements RemoteEngine.Listener {
 
     private void call(String function, String argument) {
         String js = "window." + function + " && window." + function + "(" + JSONObject.quote(argument) + ")";
-        main.post(() -> web.evaluateJavascript(js, null));
+        main.post(() -> {
+            if (!destroyed) {
+                web.evaluateJavascript(js, null);
+            }
+        });
     }
 
     /** `window.Native`, as ui/src/engine.ts declares it. Called on a WebView binder thread. */
