@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The vast.ai key is baked into the apk, so the apk is as secret as the key: build it
+// with VASTAI_API_KEY in the environment and never commit or publish what comes out.
+def env = { String name, String fallback -> System.getenv(name) ?: fallback }
+def quoted = { String s -> '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"' }
+
+android {
+    namespace 'net.katahex.remote'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'net.katahex.remote'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+
+        buildConfigField 'String', 'VAST_API_KEY', quoted(env('VASTAI_API_KEY', ''))
+        buildConfigField 'String', 'IMAGE', quoted(env('KATAHEX_IMAGE', 'ghcr.io/phlogistique/katahex-server:latest'))
+        // Cheapest offer under this price wins; raise it to skip the slowest cards.
+        buildConfigField 'double', 'MAX_DOLLARS_PER_HOUR', env('KATAHEX_MAX_DPH', '0.5')
+        // Seconds the server waits for a sign of life before destroying itself.
+        buildConfigField 'int', 'IDLE_TIMEOUT', env('KATAHEX_IDLE_TIMEOUT', '600')
+        buildConfigField 'int', 'MAX_LIFETIME', env('KATAHEX_MAX_LIFETIME', '43200')
+    }
+
+    buildFeatures { buildConfig true }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

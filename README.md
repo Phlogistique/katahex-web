@@ -714,3 +714,27 @@ Two measurement traps behind them, both worth avoiding:
   per-game median ratio of 1.01 and one game at 25.8x. Which arm gets the freak
   games flips between runs. Evaluations per move is stable; visits per move is
   not.
+
+## On a rented GPU
+
+The same ui can run its engine on a GPU rented by the hour from vast.ai instead of on the
+phone. Three pieces:
+
+- `server/`: a Docker image with upstream KataHex (`hzyhhzy/KataGomo`, branch `Hex2024`)
+  built for CUDA, HZY's 20250131 b28 net (`hex3_27x_b28`, the strongest he has released), and
+  `server.py`, which carries the ui's `Native` bridge over a websocket. Upstream writes cells
+  the way a Go board would print them; `hexgui-coords.patch` puts back the HexGUI `a1`
+  notation the ui speaks, taken from Selinger's fork under `engine/`.
+  `.github/workflows/server-image.yml` builds it to `ghcr.io/phlogistique/katahex-server`.
+- `android/`: the app. A WebView holding the ui built as one page, whose `Native` rents the
+  cheapest suitable GPU (single GPU, CUDA 12.2+, a direct port, 95% reliability, under
+  `KATAHEX_MAX_DPH` dollars an hour), waits for it, and talks to `server.py` over a
+  websocket on the mapped port, authenticated by a random token passed in at rental.
+  `VASTAI_API_KEY=... android/build.sh` builds it, **with the key inside the apk**: do not
+  publish the apk.
+- Teardown, three ways. Quitting through the back button destroys the instance. The app
+  pings only while it is on screen, and the server destroys its own instance, with the
+  per-instance `CONTAINER_API_KEY` vast puts in every container, once it has heard nothing
+  for `IDLE_TIMEOUT` (10 minutes) -- or, failing the API, exits, which stops the container
+  and the GPU's meter with it. And on its next start the app destroys any instance it
+  labelled `katahex-app` and lost track of. `MAX_LIFETIME` (12 hours) caps the rest.
