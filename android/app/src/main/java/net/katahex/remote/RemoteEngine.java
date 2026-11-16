@@ -199,11 +199,17 @@ final class RemoteEngine {
         if (offers.length() == 0) {
             throw new IOException("no GPU offer under $" + BuildConfig.MAX_DOLLARS_PER_HOUR + "/h");
         }
-        IOException last = null;
+        IOException last = new IOException("every offer was a GTX");
+        int tried = 0;
         // The cheapest are often taken between the search and the rental: walk down the list.
-        for (int i = 0; i < Math.min(offers.length(), 5); i++) {
+        for (int i = 0; i < offers.length() && tried < 5; i++) {
             JSONObject offer = offers.getJSONObject(i);
             String gpu = offer.optString("gpu_name", "GPU");
+            // A GTX 16xx is Turing without the tensor cores, so as slow as the Pascal it replaced.
+            if (gpu.startsWith("GTX")) {
+                continue;
+            }
+            tried++;
             double price = offer.optDouble("dph_total", 0);
             try {
                 progress(String.format(Locale.US, "renting a %s at $%.3f/h", gpu, price));
@@ -228,6 +234,7 @@ final class RemoteEngine {
     /** Waits for the instance to run and its server to answer. Returns host:port, or null if quitting. */
     private String waitForServer(long id) throws IOException, InterruptedException {
         long since = System.currentTimeMillis();
+        long runningSince = 0;
         while (!quitting) {
             JSONObject instance = vast.instance(id);
             if (instance == null) {
@@ -242,13 +249,27 @@ final class RemoteEngine {
             String status = instance.optString("actual_status", "starting");
             String address = address(instance);
             long waited = (System.currentTimeMillis() - since) / 1000;
-            if ("running".equals(status) && address != null && healthy(address)) {
-                return address;
+            boolean unreachable = false;
+            if ("running".equals(status) && address != null) {
+                if (healthy(address)) {
+                    return address;
+                }
+                // Running, mapped, and not answering: the server inside may still be starting,
+                // but after a minute it is more likely this phone's network blocking the port.
+                if (runningSince == 0) {
+                    runningSince = System.currentTimeMillis();
+                }
+                unreachable = System.currentTimeMillis() - runningSince > 60_000;
             }
-            String detail = instance.optString("status_msg", "").trim();
-            progress(String.format(Locale.US, "server %s%s (%ds)", "null".equals(status) ? "starting" : status,
-                detail.isEmpty() || "null".equals(detail) ? "" : ": " + detail.substring(0, Math.min(80, detail.length())),
-                waited));
+            if (unreachable) {
+                progress("the server is up but this phone cannot reach " + address
+                    + " -- is this network blocking odd ports? Try mobile data or another wifi");
+            } else {
+                String detail = instance.optString("status_msg", "").trim();
+                progress(String.format(Locale.US, "server %s%s (%ds)", "null".equals(status) ? "starting" : status,
+                    detail.isEmpty() || "null".equals(detail) ? "" : ": " + detail.substring(0, Math.min(80, detail.length())),
+                    waited));
+            }
             if (waited > 20 * 60) {
                 vast.destroy(id);
                 prefs.edit().remove(PREF_INSTANCE).apply();
