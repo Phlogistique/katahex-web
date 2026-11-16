@@ -44,7 +44,7 @@ TOKEN = os.environ.get("KATAHEX_TOKEN", "")
 IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT", "600"))
 FIRST_CONNECT_TIMEOUT = float(os.environ.get("FIRST_CONNECT_TIMEOUT", "900"))
 MAX_LIFETIME = float(os.environ.get("MAX_LIFETIME", str(12 * 3600)))
-SEARCH_THREADS = int(os.environ.get("SEARCH_THREADS", "0"))  # 0: from the cpu count
+SEARCH_THREADS = int(os.environ.get("SEARCH_THREADS", "32"))
 # Started at boot, so that the client's first board is ready by the time it connects.
 WARMUP_SIZE = int(os.environ.get("WARMUP_SIZE", "11"))
 # Visits of a search run once the warmup engine is up, logged with its speed. 0: none.
@@ -60,10 +60,10 @@ def log(*parts):
 
 
 def search_threads():
-    if SEARCH_THREADS > 0:
-        return SEARCH_THREADS
-    # The GPU wants batches, which come from threads; past the cpu count they only contend.
-    return max(4, min(32, 2 * (os.cpu_count() or 4)))
+    # The GPU wants batches, and batches come from threads, which spend most of their time
+    # waiting on it rather than on a core: an RTX 3060 on a 4-core slice did 457 visits a
+    # second on 11x11 with 8 threads and 928 with 32.
+    return max(1, SEARCH_THREADS)
 
 
 def config(size):

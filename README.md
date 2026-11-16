@@ -727,8 +727,8 @@ phone. Three pieces:
   notation the ui speaks, taken from Selinger's fork under `engine/`.
   `.github/workflows/server-image.yml` builds it to `ghcr.io/phlogistique/katahex-server`.
 - `android/`: the app. A WebView holding the ui built as one page, whose `Native` rents the
-  cheapest suitable GPU (single GPU, CUDA 12.2+, a direct port, 95% reliability, under
-  `KATAHEX_MAX_DPH` dollars an hour), waits for it, and talks to `server.py` over a
+  cheapest suitable GPU (single GPU, Turing or newer, CUDA 12.2+, a direct port, 95%
+  reliability, under `KATAHEX_MAX_DPH` dollars an hour), waits for it, and talks to `server.py` over a
   websocket on the mapped port, authenticated by a random token passed in at rental.
   `VASTAI_API_KEY=... android/build.sh` builds it, **with the key inside the apk**: do not
   publish the apk.
@@ -738,3 +738,24 @@ phone. Three pieces:
   for `IDLE_TIMEOUT` (10 minutes) -- or, failing the API, exits, which stops the container
   and the GPU's meter with it. And on its next start the app destroys any instance it
   labelled `katahex-app` and lost track of. `MAX_LIFETIME` (12 hours) caps the rest.
+
+### Which GPU
+
+11x11, the b28 net, one 20000-visit search from the empty board, one machine each, November
+2026 prices:
+
+| GPU      | $/h   | search threads | visits/s | visits per cent |
+| -------- | ----- | -------------- | -------- | --------------- |
+| GTX 1070 | 0.049 | 16             | 232      | 170k            |
+| RTX 2060 | 0.062 | 24             | 740      | 430k            |
+| RTX 3060 | 0.054 | 8              | 457      | 300k            |
+| RTX 3060 | 0.056 | 32             | 928      | 600k            |
+| RTX 4070 | 0.116 | 32             | 1331     | 410k            |
+| RTX 4090 | 0.374 | 32             | 2488     | 240k            |
+
+The GPU is the bottleneck, and fp16 is the whole story at the cheap end: Pascal has no fast
+half precision, so the cheapest card by the hour is the dearest by the visit, and the app asks
+for compute capability 7.5 or better. Search threads are the other lever -- they spend their
+time waiting on the GPU, so the server runs 32 whatever the core count, where sizing them from
+the cpu count halved a 3060 on a 4-core slice. Past the 3060, more money buys speed at a worse
+rate; the 4090 run is short enough that its ramp-up shows, so it may be undersold.

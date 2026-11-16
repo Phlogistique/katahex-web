@@ -44,6 +44,10 @@ final class Vast {
                 .put("inet_down", new JSONObject().put("gte", 100))
                 .put("disk_space", new JSONObject().put("gte", 20))
                 .put("gpu_ram", new JSONObject().put("gte", 4000))
+                // Turing or newer: fp16 on tensor cores. A Pascal card is the cheapest by the
+                // hour and the dearest by the visit -- a GTX 1070 at $0.049/h does 232 visits a
+                // second on 11x11 where an RTX 2060 at $0.062/h does 740.
+                .put("compute_cap", new JSONObject().put("gte", 750))
                 .put("dph_total", new JSONObject().put("lte", maxDollarsPerHour))
                 .put("type", "on-demand")
                 .put("order", new JSONArray().put(new JSONArray().put("dph_total").put("asc")))
