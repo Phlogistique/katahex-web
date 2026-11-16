@@ -45,6 +45,10 @@ IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT", "600"))
 FIRST_CONNECT_TIMEOUT = float(os.environ.get("FIRST_CONNECT_TIMEOUT", "900"))
 MAX_LIFETIME = float(os.environ.get("MAX_LIFETIME", str(12 * 3600)))
 SEARCH_THREADS = int(os.environ.get("SEARCH_THREADS", "0"))  # 0: from the cpu count
+# Started at boot, so that the client's first board is ready by the time it connects.
+WARMUP_SIZE = int(os.environ.get("WARMUP_SIZE", "11"))
+# Visits of a search run once the warmup engine is up, logged with its speed. 0: none.
+BENCH_VISITS = int(os.environ.get("BENCH_VISITS", "0"))
 VAST_API = os.environ.get("VAST_API", "https://console.vast.ai/api/v0")
 
 STARTED = time.monotonic()
@@ -95,6 +99,7 @@ class Hub:
         self.size = 0
         self.ready = False
         self.last_life = None  # monotonic time of the last client message, None before any
+        self.benched = 0.0
         self.lock = asyncio.Lock()
 
     async def broadcast(self, kind, line):
@@ -114,7 +119,22 @@ class Hub:
             if kind == "log":
                 if READY_LINE in line and proc is self.proc:
                     self.ready = True
+                    if BENCH_VISITS and not self.benched:
+                        self.benched = time.monotonic()
+                        self.write(json.dumps({
+                            "id": "bench", "boardXSize": self.size, "boardYSize": self.size,
+                            "initialStones": [], "initialPlayer": "B", "moves": [],
+                            "rules": "tromp-taylor", "komi": 0, "maxVisits": BENCH_VISITS}))
                 log("engine:", line[:300])
+            elif '"id":"reconnect"' in line:
+                continue  # the server's own terminate_all, nobody's business
+            elif '"id":"bench"' in line:
+                reply = json.loads(line)
+                visits = reply.get("rootInfo", {}).get("visits", 0)
+                seconds = time.monotonic() - self.benched
+                best = [(m["move"], m["visits"]) for m in reply.get("moveInfos", [])[:3]]
+                log(f"bench: {visits} visits in {seconds:.1f}s, {visits / seconds:.0f}/s, best {best}")
+                continue
             await self.broadcast(kind, line)
 
     async def watch_exit(self, proc):
@@ -267,6 +287,8 @@ async def main():
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, lambda: os._exit(0))
     asyncio.create_task(dead_mans_switch())
+    if 2 <= WARMUP_SIZE <= 19:
+        await hub.start(WARMUP_SIZE)
     async with serve(handle, "0.0.0.0", PORT, process_request=process_request,
                      max_size=16 * 1024 * 1024, ping_interval=20, ping_timeout=60):
         log(f"listening on {PORT}; idle {IDLE_TIMEOUT:.0f}s, first connect "
