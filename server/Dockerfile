@@ -36,7 +36,7 @@ RUN curl -fsSL -o /net.bin.gz "$NET_URL" && echo "$NET_SHA256  /net.bin.gz" | sh
 FROM ${CUDA_IMAGE}-runtime-ubuntu22.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       python3 python3-pip zlib1g libgomp1 ca-certificates \
-    && pip3 install --no-cache-dir websockets==13.1 \
+    && pip3 install --no-cache-dir websockets==14.2 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/katago /opt/katahex/katahex
 COPY --from=build /net.bin.gz /opt/katahex/net.bin.gz
