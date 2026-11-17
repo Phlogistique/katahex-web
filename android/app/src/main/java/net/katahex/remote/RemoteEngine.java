@@ -54,7 +54,8 @@ final class RemoteEngine {
         .readTimeout(0, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS)
         .build();
-    private final Vast vast = new Vast(http, BuildConfig.VAST_API_KEY);
+    private static final String PREF_KEY = "vast_key";
+    private volatile Vast vast;
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final SharedPreferences prefs;
     private final Listener listener;
@@ -71,6 +72,22 @@ final class RemoteEngine {
         this.prefs = prefs;
         this.listener = listener;
         info = prefs.getString(PREF_INFO, "");
+        vast = new Vast(http, key());
+    }
+
+    /** The key built into the apk, or else the one the user typed in. */
+    String key() {
+        return BuildConfig.VAST_API_KEY.isEmpty() ? prefs.getString(PREF_KEY, "") : BuildConfig.VAST_API_KEY;
+    }
+
+    boolean keyBuiltIn() {
+        return !BuildConfig.VAST_API_KEY.isEmpty();
+    }
+
+    void setKey(String key) {
+        prefs.edit().putString(PREF_KEY, key.trim()).apply();
+        vast = new Vast(http, key());
+        ensureUp();
     }
 
     // ---- the page's bridge --------------------------------------------------------------
@@ -152,8 +169,9 @@ final class RemoteEngine {
 
     private void bringUp() {
         try {
-            if (BuildConfig.VAST_API_KEY.isEmpty()) {
-                progress("this build has no vast.ai key: rebuild with VASTAI_API_KEY set");
+            if (key().isEmpty()) {
+                progress("enter your vast.ai API key: tap the bar at the bottom");
+                bringingUp = false;
                 return;
             }
             long id = prefs.getLong(PREF_INSTANCE, 0);

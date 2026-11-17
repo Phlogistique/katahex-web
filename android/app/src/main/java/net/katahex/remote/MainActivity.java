@@ -86,7 +86,7 @@ public class MainActivity extends Activity implements RemoteEngine.Listener {
         int pad = (int) (6 * getResources().getDisplayMetrics().density);
         bar.setPadding(pad * 2, pad, pad * 2, pad);
         bar.setText(engine.info().isEmpty() ? "no server yet" : engine.info());
-        bar.setOnClickListener(v -> askQuit());
+        bar.setOnClickListener(v -> menu());
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -101,6 +101,9 @@ public class MainActivity extends Activity implements RemoteEngine.Listener {
         }
         setContentView(root);
         web.loadUrl("file:///android_asset/index.html");
+        if (engine.key().isEmpty()) {
+            askKey();
+        }
 
         if (Build.VERSION.SDK_INT >= 33) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -112,6 +115,53 @@ public class MainActivity extends Activity implements RemoteEngine.Listener {
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         askQuit();
+    }
+
+    private void menu() {
+        java.util.List<String> items = new java.util.ArrayList<>();
+        items.add("Quit and destroy the server");
+        if (!engine.keyBuiltIn()) {
+            items.add("Change the vast.ai API key");
+        }
+        new AlertDialog.Builder(this)
+            .setTitle(engine.info().isEmpty() ? "KataHex GPU" : engine.info())
+            .setItems(items.toArray(new String[0]), (d, which) -> {
+                if (which == 0) {
+                    askQuit();
+                } else {
+                    askKey();
+                }
+            })
+            .show();
+    }
+
+    /** Builds without a key in them ask for one, and keep it on the phone. */
+    private void askKey() {
+        android.widget.EditText field = new android.widget.EditText(this);
+        field.setSingleLine(true);
+        field.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        field.setHint("vast.ai API key");
+        field.setText(engine.key());
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        android.widget.FrameLayout box = new android.widget.FrameLayout(this);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(field);
+        new AlertDialog.Builder(this)
+            .setTitle("vast.ai API key")
+            .setMessage("The app rents a GPU on your vast.ai account. Create a key at "
+                + "cloud.vast.ai, Account, Keys; it stays on this phone.")
+            .setView(box)
+            .setPositiveButton("Save", (d, w) -> {
+                String key = field.getText().toString().trim();
+                if (!key.isEmpty()) {
+                    engine.setKey(key);
+                }
+            })
+            .setNeutralButton("Open vast.ai", (d, w) -> startActivity(new android.content.Intent(
+                android.content.Intent.ACTION_VIEW, Uri.parse("https://cloud.vast.ai/manage-keys/"))))
+            .setNegativeButton("Cancel", null)
+            .show();
     }
 
     private void askQuit() {

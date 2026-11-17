@@ -2,8 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
-// The vast.ai key is baked into the apk, so the apk is as secret as the key: build it
-// with VASTAI_API_KEY in the environment and never commit or publish what comes out.
+// With VASTAI_API_KEY in the environment the key is baked into the apk, which is then as
+// secret as the key: never commit or publish it. Without it -- the release build CI makes --
+// the app asks for a key on first start and keeps it on the phone.
 def env = { String name, String fallback -> System.getenv(name) ?: fallback }
 def quoted = { String s -> '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"' }
 
@@ -15,8 +16,8 @@ android {
         applicationId 'net.katahex.remote'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode Integer.parseInt(env('VERSION_CODE', '1'))
+        versionName env('VERSION_NAME', 'dev')
 
         buildConfigField 'String', 'VAST_API_KEY', quoted(env('VASTAI_API_KEY', ''))
         buildConfigField 'String', 'IMAGE', quoted(env('KATAHEX_IMAGE', 'ghcr.io/phlogistique/katahex-server:latest'))
@@ -29,10 +30,24 @@ android {
 
     buildFeatures { buildConfig true }
 
+    // A release signed with the same key every time installs over the last one. CI signs with
+    // the ANDROID_KEYSTORE secret when the repository has one, and with a throwaway debug key
+    // otherwise, which means uninstalling before each upgrade.
+    signingConfigs {
+        release {
+            if (System.getenv('KEYSTORE_FILE')) {
+                storeFile file(System.getenv('KEYSTORE_FILE'))
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD') ?: System.getenv('KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug
+            signingConfig System.getenv('KEYSTORE_FILE') ? signingConfigs.release : signingConfigs.debug
         }
     }
 
