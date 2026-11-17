@@ -1,10 +1,20 @@
-import { HexMove } from '../../../move-notation/hex-move-notation.js';
+import { HexMove } from '@playhex/move-notation';
 import { ImportUserError } from '../errors.js';
 import { ImporterHandlerInterface } from '../ImporterHandlerInterface.js';
 import { ImportedGame } from '../types.js';
+import { UUID_PATTERN } from '../../utils.js';
 
-const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const SOURCE_PATTERN = new RegExp(`^(?:https?:\\/\\/[^/]+\\/games\\/)?(${UUID_PATTERN})\\/?$`, 'i');
+
+/**
+ * "https://playhex.org/games/0d1f8e8c-..." => "0d1f8e8c-..."
+ * Null if source is not a PlayHex game url or id.
+ */
+export const parsePlayHexGameId = (source: string): null | string => {
+    const match = source.trim().match(SOURCE_PATTERN);
+
+    return match ? match[1].toLowerCase() : null;
+};
 
 type GamesApiResponse = {
     boardsize: number;
@@ -12,11 +22,11 @@ type GamesApiResponse = {
     state: 'created' | 'canceled' | 'playing' | 'ended';
 
     /**
-     * Always sorted by player order (see HostedGame's @AfterLoad sort hook),
+     * Always sorted by player order (see Game's @AfterLoad sort hook),
      * so index 0 is black (order 0) and index 1 is white (order 1).
      * "order" itself is not exposed by the api.
      */
-    hostedGameToPlayers: { player: { pseudo: string } }[];
+    gameToPlayers: { player: { pseudo: string } }[];
 };
 
 /**
@@ -48,9 +58,7 @@ export class PlayHexLink implements ImporterHandlerInterface
 
     private parseGameId(source: string): null | string
     {
-        const match = source.trim().match(SOURCE_PATTERN);
-
-        return match ? match[1] : null;
+        return parsePlayHexGameId(source);
     }
 
     async import(source: string): Promise<ImportedGame>
@@ -80,8 +88,10 @@ export class PlayHexLink implements ImporterHandlerInterface
         return {
             boardsize: game.boardsize,
             moves: game.moves,
-            playerBlackName: game.hostedGameToPlayers[0]?.player.pseudo,
-            playerWhiteName: game.hostedGameToPlayers[1]?.player.pseudo,
+            playerBlackName: game.gameToPlayers[0]?.player.pseudo,
+            playerWhiteName: game.gameToPlayers[1]?.player.pseudo,
+            // Only ended games can be linked to a puzzle, see canCreatePuzzleFromGame()
+            playHexGamePublicId: game.state === 'ended' ? gameId.toLowerCase() : undefined,
         };
     }
 }

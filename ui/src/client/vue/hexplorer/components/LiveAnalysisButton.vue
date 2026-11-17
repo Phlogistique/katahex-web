@@ -12,7 +12,8 @@
 import { computed, watch } from 'vue';
 import { setAnalyzersRefresh } from '../../../../analyzers.js';
 import { KatahexAnalyzer } from '../analyzers/KatahexAnalyzer.js';
-import { IconPauseFill, IconPlayFill } from '../../icons.js';
+import { IconPlayFill } from '../../icons.js';
+import IconPauseFill from '~icons/bi/pause-fill';
 import type { AnalyzerInterface } from '../analyzers/AnalyzerInterface.js';
 
 const props = defineProps<{

@@ -4,6 +4,9 @@
  * (reusing the same hexagon look as AppConditionalMoveButton), connected
  * by straight (not diagonal) lines: a single line down for a single
  * child, a horizontal bar + verticals when branching.
+ *
+ * Every depth level takes exactly --tree-col width (hexagon + stem),
+ * so nodes are aligned in columns, see HexplorerMoveTreePanel.
  */
 import { computed, onMounted, useTemplateRef, watch } from 'vue';
 import { GameTree } from '../GameTree.js';
@@ -18,7 +21,21 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     select: [id: number];
+
+    /**
+     * Ctrl+click: mention this node in chat
+     */
+    mention: [id: number];
 }>();
+
+const onClick = (e: MouseEvent): void => {
+    if (e.ctrlKey || e.metaKey) {
+        emit('mention', props.nodeId);
+        return;
+    }
+
+    emit('select', props.nodeId);
+};
 
 const node = computed(() => props.tree.getNode(props.nodeId));
 
@@ -41,9 +58,10 @@ const label = computed(() => {
 const button = useTemplateRef<HTMLButtonElement>('button');
 
 /*
- * A line grows the tree sideways well past its window, so the node the board is showing has to
- * be brought back into view -- on navigation, and on load, where a whole imported game is laid
- * out at once. 'nearest' so a node already visible does not move the panel.
+ * Patched here: a line grows the tree sideways well past its window, so the node the board is
+ * showing has to be brought back into view -- on navigation, on load, where a whole imported
+ * game is laid out at once, and while the engine plays itself. 'nearest' so a node already
+ * visible does not move the panel.
  */
 const revealIfCurrent = (): void => {
     if (props.nodeId === props.currentNodeId) {
@@ -76,10 +94,12 @@ const playerIndex = computed<0 | 1>(() => {
             type="button"
             class="tree-node-button"
             :class="{ 'tree-node-current': nodeId === currentNodeId }"
-            @click="emit('select', nodeId)"
+            :data-node-id="nodeId"
+            @click="onClick"
         >
             <AppConditionalMoveButton :label :playerIndex :class="{ 'setup-node': isSetup }" />
             <IconPencilSquare v-if="isSetup" class="setup-icon" />
+            <span v-if="node.comment" class="comment-dot bg-info"></span>
         </button>
 
         <!--
@@ -95,6 +115,7 @@ const playerIndex = computed<0 | 1>(() => {
                 :nodeId="node.children[0]"
                 :currentNodeId
                 @select="id => emit('select', id)"
+                @mention="id => emit('mention', id)"
             />
         </template>
 
@@ -108,6 +129,7 @@ const playerIndex = computed<0 | 1>(() => {
                         :nodeId="childId"
                         :currentNodeId
                         @select="id => emit('select', id)"
+                        @mention="id => emit('mention', id)"
                     />
                 </div>
             </div>
@@ -137,7 +159,7 @@ const playerIndex = computed<0 | 1>(() => {
 
     :deep(div.hexagons)
         height 1.5rem
-        width 1.7rem
+        width var(--tree-hex-width, 1.7rem)
 
         &::before
             font-size 1.7rem
@@ -159,9 +181,18 @@ const playerIndex = computed<0 | 1>(() => {
     font-size 0.7rem
     pointer-events none
 
+.comment-dot
+    position absolute
+    top 0
+    right 0
+    width 0.45rem
+    height 0.45rem
+    border-radius 50%
+    pointer-events none
+
 .tree-stem
     height 2px
-    width 0.3rem
+    width calc(var(--tree-col, 2rem) - var(--tree-hex-width, 1.7rem))
     background var(--bs-border-color)
 
 .tree-children
@@ -197,6 +228,6 @@ const playerIndex = computed<0 | 1>(() => {
         left 0
         top 50%
         height 2px
-        width 0.3rem
+        width calc(var(--tree-col, 2rem) - var(--tree-hex-width, 1.7rem))
         background var(--bs-border-color)
 </style>

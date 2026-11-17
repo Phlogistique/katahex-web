@@ -1,4 +1,4 @@
-import { coordsToMove } from './shared/move-notation/move-notation.js';
+import { coordsToMove } from '@playhex/move-notation';
 import { analysisCacheKey, type AnalysisInput, type AnalysisOutput } from './shared/app/hexplorer.js';
 import type { EngineAnalysis } from './engine.js';
 

@@ -1,4 +1,4 @@
-import { AutoOrientationFacade, GameView, themes } from '@playhex/pixi-board';
+import { AutoOrientationFacade, GameView, playhexTheme, resolveTheme } from '@playhex/pixi-board';
 
 /**
  * Of the twelve orientations only two put a1 in the top left corner: ORIENTATION_FLAT, which
@@ -19,7 +19,7 @@ export class PlayerSettingsFacade
 {
     constructor(gameView: GameView)
     {
-        gameView.setTheme(themes.dark);
+        void gameView.setTheme(resolveTheme(playhexTheme, 'dark'));
         gameView.setDisplayCoords(true);
 
         new AutoOrientationFacade(gameView, {

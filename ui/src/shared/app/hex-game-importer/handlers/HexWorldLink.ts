@@ -1,4 +1,4 @@
-import { HexMove } from '../../../move-notation/hex-move-notation.js';
+import { HexMove } from '@playhex/move-notation';
 import { parseHexworldString } from '../../hexworld.js';
 import { ImporterHandlerInterface } from '../ImporterHandlerInterface.js';
 import { ImportedGame } from '../types.js';
@@ -12,8 +12,9 @@ export class HexWorldLink implements ImporterHandlerInterface
 {
     supports(source: string): boolean
     {
+        // Same format as parseHexworldString() expects: "<size>[x<height>][options],<moves>"
         return source.includes('hexworld.org/board')
-            || source.match(/\d+(r\d+)?(c\d)?,?/) !== null
+            || /^\d+[^,\s]*,/.test(source.trim())
         ;
     }
 

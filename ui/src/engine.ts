@@ -1,4 +1,4 @@
-import { coordsToMove } from './shared/move-notation/move-notation.js';
+import { coordsToMove } from '@playhex/move-notation';
 import { improvedPolicy } from './improvedPolicy.js';
 import type { AnalysisInput, AnalysisOutput } from './shared/app/hexplorer.js';
 

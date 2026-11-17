@@ -1,13 +1,12 @@
 import seedrandom from 'seedrandom';
-import { Game } from '../game-engine/index.js';
-import { coordsToMove } from '../move-notation/move-notation.js';
-import type { HexMove } from '../move-notation/hex-move-notation.js';
+import { EngineGame } from '../game-engine/index.js';
+import { coordsToMove, type HexMove } from '@playhex/move-notation';
 
 /**
  * Returns a random number in [0;1[
  * if determinist, return always same number for a given game position.
  */
-const rand = (game: Game, determinist: boolean): number => {
+const rand = (game: EngineGame, determinist: boolean): number => {
     const rng = determinist
         ? seedrandom(game
             .getMovesHistory()
@@ -26,7 +25,7 @@ const rand = (game: Game, determinist: boolean): number => {
  * @param waitBeforePlay Time to wait in millisecond before return move. 0 to test concurrence, higher value to see coming.
  * @param determinist If random moves should be determinist. Bot will respond same as long as you play same moves.
  */
-export const calcRandomMove = async (game: Game, waitBeforePlay = 0, determinist = false): Promise<HexMove> => {
+export const calcRandomMove = async (game: EngineGame, waitBeforePlay = 0, determinist = false): Promise<HexMove> => {
 
     if (waitBeforePlay > 0) {
         await new Promise(resolve => {

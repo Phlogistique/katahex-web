@@ -1,19 +1,17 @@
-import { GameView, PlayingGameFacade } from '@playhex/pixi-board';
+import { GameView, PlayingGameFacade, PolicyOverlayFacade } from '@playhex/pixi-board';
 import { movesToHexworldString, parseHexworldString } from '../../../../shared/app/hexworld.js';
-import { HexMove } from '../../../../shared/move-notation/hex-move-notation.js';
-import { computed, Ref, ref, shallowRef, watch } from 'vue';
+import { coordsToMove, HexMove, Move } from '@playhex/move-notation';
+import { computed, InjectionKey, MaybeRefOrGetter, nextTick, Ref, ref, shallowRef, toValue, watch } from 'vue';
 import { ToolInterface } from '../tools/ToolInterface.js';
 import { PlaceStonesAlternatelyTool } from '../tools/PlaceStonesAlternatelyTool.js';
 import { RemoveStoneTool } from '../tools/RemoveStoneTool.js';
 import { PlayerSettingsFacade } from '../../../services/board-view-facades/PlayerSettingsFacade.js';
-import { PolicyOverlayFacade } from '../../../../shared/pixi-board/facades/PolicyOverlayFacade.js';
 import { UndoableActionsStack } from '../undoredo/undoredo.js';
-import { coordsToMove, Move } from '../../../../shared/move-notation/move-notation.js';
 import { onKeyDown, useEventListener } from '@vueuse/core';
 import { createHexplorerState, HexplorerState } from '../HexplorerState.js';
 import { ImportedGame } from '../../../../shared/app/hex-game-importer/types.js';
 import { GameTree, ROOT_ID, SetupStone, TreeNode } from '../GameTree.js';
-import Game from '../../../../shared/game-engine/Game.js';
+import EngineGame from '../../../../shared/game-engine/EngineGame.js';
 import { AnalyzerInterface } from '../analyzers/AnalyzerInterface.js';
 import { onBeforeRouteLeave } from 'vue-router';
 import { BoardMarksLayer, MarkType } from '../BoardMarksLayer.js';
@@ -22,11 +20,15 @@ import { gameTreeToSgf } from '../exportSgf.js';
 import { sgfToString } from '../../../../shared/sgf/index.js';
 import { downloadString } from '../../../services/fileDownload.js';
 import { DragPainter } from '../DragPainter.js';
+import { AnalysisEngineUnavailableError } from '../../../../shared/app/hexplorer.js';
+import { canSwapAfter, movesToTreeNodes, parseHexplorerState } from '../../../../shared/app/hexplorerStudy.js';
+import type { HexplorerLiveSnapshot, HexplorerMatchStartPosition } from '../../../../shared/app/hexplorerLive.js';
+import { useAnalysisEngines } from './useAnalysisEngines.js';
 import { SearchAborted } from '../../../../engine.js';
 
 /**
  * Walks a square board and splits the stones it holds into a black and a white move list,
- * whatever the board actually is (visible GameView, headless Game…).
+ * whatever the board actually is (visible GameView, headless EngineGame…).
  */
 const splitStonesByColor = (boardsize: number, playerIndexAt: (move: Move) => null | 0 | 1): { black: Move[], white: Move[] } => {
     const black: Move[] = [];
@@ -48,7 +50,39 @@ const splitStonesByColor = (boardsize: number, playerIndexAt: (move: Move) => nu
     return { black, white };
 };
 
-export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | null = null) => {
+export type UseHexplorerOptions = {
+    /**
+     * Board can't be edited nor navigated by player, and nothing is analyzed:
+     * state is only set from outside, e.g by a streamer (see applyLiveSnapshot).
+     * Can change, e.g when a live session viewer becomes editor.
+     */
+    readonly?: MaybeRefOrGetter<boolean>;
+
+    /**
+     * Whether current position is kept in URL hash. Default to true when not readonly.
+     */
+    syncUrlHash?: boolean;
+
+    /**
+     * Whether AI analysis comes from a live session host (viewers and editors):
+     * nothing is analyzed nor auto-played here, analysis of host is displayed, see applyLiveSnapshot().
+     */
+    analysisFromLive?: boolean;
+};
+
+/**
+ * @param analyzers Engines that can be selected. First one is the default.
+ */
+export const useHexplorer = (fromHash: string, analyzers: AnalyzerInterface[], options: UseHexplorerOptions = {}) => {
+    const readonly = computed(() => toValue(options.readonly) ?? false);
+    const urlHashSynced = options.syncUrlHash ?? !readonly.value;
+
+    /**
+     * True while displaying a snapshot sent by another live session participant:
+     * its analysis is displayed as is, nothing is analyzed nor auto-played.
+     */
+    let applyingLiveSnapshot = false;
+
     /**
      * Actions made so far while in setup mode (scratch editing, not yet validated into the tree).
      * Can be undo/redo.
@@ -56,15 +90,43 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     const actionsStack = ref(new UndoableActionsStack());
 
     // Raw, plain state, passed to tools so they can mutate it directly.
-    const state = ref<HexplorerState>(createHexplorerState());
+    const state = ref<HexplorerState>({ ...createHexplorerState(), analyzerName: analyzers[0].getName() });
 
     const currentTool = shallowRef<ToolInterface>(null!);
     const whiteWin = ref<number | undefined>(0.5);
     const analysisLoading = ref(false);
 
+    // Why last analysis of current position failed, null if it did not fail.
+    const analysisError = ref<null | 'engine_unavailable' | 'failed'>(null);
+
+    const { aiAvailability, refreshEnginesStatus, isAnalyzerAvailable, isEngineAvailable } = useAnalysisEngines(analysisError);
+
     // The analyzer currently used to compute winrate/policy. Can be swapped at runtime
     // (see setAnalyzer), e.g to disable analysis (NoopAnalyzer) or change engine.
-    const currentAnalyzer = shallowRef<AnalyzerInterface | null>(analyzer);
+    const currentAnalyzer = shallowRef<AnalyzerInterface | null>(readonly.value ? null : analyzers[0]);
+
+    /**
+     * Whether AI analysis is enabled, kept in state: saved with study, and enabled by host for live session participants.
+     */
+    const aiEnabled = computed({
+        get: () => state.value.aiEnabled,
+        set: enabled => state.value.aiEnabled = enabled,
+    });
+
+    /**
+     * Analyzer actually used, null when AI is disabled, or computed by live session host.
+     */
+    const activeAnalyzer = computed(() => aiEnabled.value && !readonly.value && !options.analysisFromLive ? currentAnalyzer.value : null);
+
+    // Analyzer used once editable, the one of the state if any.
+    watch(readonly, isReadonly => {
+        currentAnalyzer.value = isReadonly
+            ? null
+            : analyzers.find(a => a.getName() === state.value.analyzerName) ?? analyzers[0];
+    });
+
+    // Analysis currently displayed for the current position, sent to stream viewers.
+    const displayedAnalysis = shallowRef<HexplorerLiveSnapshot['analysis']>(null);
 
 
     // Branching move history. currentNodeId is the position currently displayed on the board.
@@ -204,9 +266,14 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     let analysisRequestId = 0;
 
     const updateAnalysis = async (): Promise<void> => {
+        // Analysis is set by streamer, see applyLiveSnapshot()
+        if (readonly.value || applyingLiveSnapshot) {
+            return;
+        }
+
         policyOverlayFacade.clear();
 
-        const analyzer = currentAnalyzer.value;
+        const analyzer = activeAnalyzer.value;
         const player = state.value.currentPlayer;
         const showWinrate = state.value.winrateEnabled[player];
         const showPolicy = state.value.policyEnabled[player];
@@ -216,9 +283,12 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         // result (computed with the previous settings) once it resolves.
         const requestId = ++analysisRequestId;
 
+        analysisError.value = null;
+        displayedAnalysis.value = null;
+
         // Nothing to display for the color to move: hide the winrate bar.
         if (!analyzer || (!showWinrate && !showPolicy)) {
-            analyzer?.setDisplayedPosition?.(null);
+            currentAnalyzer.value?.setDisplayedPosition?.(null);
             whiteWin.value = undefined;
             analysisLoading.value = false;
             return;
@@ -239,9 +309,18 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             result = await analyzer.analyzePosition({ size, color, black, white });
         } catch (e) {
             // Do not leave the loading indicator spinning forever on a failed analysis.
-            if (requestId === analysisRequestId) {
-                analysisLoading.value = false;
+            if (requestId !== analysisRequestId) {
+                return;
             }
+
+            analysisLoading.value = false;
+
+            if (e instanceof AnalysisEngineUnavailableError) {
+                analysisError.value = 'engine_unavailable';
+                return;
+            }
+
+            analysisError.value = 'failed';
 
             // eslint-disable-next-line no-console
             console.error('Error while analyzing position', e);
@@ -268,23 +347,29 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             policyOverlayFacade.setShowBestMark(state.value.policyShowBestMark);
             policyOverlayFacade.apply(result.policy, color);
         }
+
+        displayedAnalysis.value = {
+            color,
+            ...(showWinrate && typeof result.whiteWin === 'number' ? { whiteWin: result.whiteWin } : {}),
+            ...(showPolicy && result.policy ? { policy: result.policy } : {}),
+        };
     };
 
     /**
-     * Replays moves on a headless Game instance (independent of the visible GameView)
+     * Replays moves on a headless EngineGame instance (independent of the visible GameView)
      * and returns the black/white stones currently on its board.
      */
-    const getBlackWhiteFromGame = (game: Game): { black: Move[], white: Move[] } => {
+    const getBlackWhiteFromGame = (game: EngineGame): { black: Move[], white: Move[] } => {
         const cells = game.getBoard().getCells();
 
         return splitStonesByColor(cells.length, move => game.getBoard().getCell(move));
     };
 
     /**
-     * Applies a single tree node (setup or move) onto a headless Game instance.
+     * Applies a single tree node (setup or move) onto a headless EngineGame instance.
      * Returns false if the move was illegal, meaning replay should stop here.
      */
-    const applyNodeToGame = (game: Game, node: TreeNode): boolean => {
+    const applyNodeToGame = (game: EngineGame, node: TreeNode): boolean => {
         if (node.data === null) {
             return true;
         }
@@ -306,11 +391,11 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     };
 
     /**
-     * Replays the path from root to the given node on a headless Game instance,
+     * Replays the path from root to the given node on a headless EngineGame instance,
      * so its win/end state can be inspected (used to stop auto-play on a finished game).
      */
-    const buildGameAt = (nodeId: number): Game => {
-        const game = new Game(gameView.getBoardsize());
+    const buildGameAt = (nodeId: number): EngineGame => {
+        const game = new EngineGame(gameView.getBoardsize());
 
         for (const node of tree.getPath(nodeId)) {
             if (!applyNodeToGame(game, node)) {
@@ -336,11 +421,17 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     /**
      * Computes/caches the evaluation of every not-yet-cached position in the line the graph
      * draws, the continuation past the cursor included; the displayed one is left to
-     * updateAnalysis(). Runs on a headless Game instance, independent of the visible board, so
-     * it can run in the background without blocking or racing with further navigation.
+     * updateAnalysis(). Runs on a headless EngineGame instance, independent of the visible
+     * board, so it can run in the background without blocking or racing with further
+     * navigation.
+     *
+     * Patched here: PlayHex submits the ancestors one after the other to a server that
+     * answers each in a moment. Here there is one engine, a search of a position costs
+     * seconds and holds its tree until it answers, so each position waits for nothing to be
+     * computed for the position on screen, and how far the line has got is reported.
      */
     const fillLineEvals = async (): Promise<void> => {
-        const analyzer = currentAnalyzer.value;
+        const analyzer = activeAnalyzer.value;
         const run = ++lineRun;
 
         if (!analyzer) {
@@ -349,7 +440,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         }
 
         const boardsize = gameView.getBoardsize();
-        const game = new Game(boardsize);
+        const game = new EngineGame(boardsize);
         const positions: { node: TreeNode, input: Parameters<AnalyzerInterface['analyzePosition']>[0] }[] = [];
 
         for (const node of currentLine.value) {
@@ -374,13 +465,8 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             });
         }
 
-        // One position after the other, and each of them only once nothing is being computed
-        // for the position on screen: there is one engine, a search of a position costs seconds
-        // and holds its tree until it answers, and submitting a whole line at once is that many
-        // trees resident at once. Each result is kept as it arrives, so the graph fills in.
-
         // A superseded run leaves the progress alone: the run that superseded it has set its own.
-        const superseded = () => currentAnalyzer.value !== analyzer || run !== lineRun;
+        const superseded = () => activeAnalyzer.value !== analyzer || run !== lineRun;
 
         // One position behind is the ordinary churn of playing a move, and auto-play is one
         // position behind for a whole game. Only a backlog is worth a line of its own.
@@ -404,8 +490,6 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
                 await idle;
             }
 
-            // The analyzer may have been swapped while we were waiting (see setAnalyzer, which
-            // drops the cache): these numbers would belong to a previous engine.
             if (superseded()) {
                 return;
             }
@@ -431,8 +515,11 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
                     continue;
                 }
 
-                // eslint-disable-next-line no-console
-                console.error('Error while analyzing a position of the line', e);
+                // Already displayed by updateAnalysis(), with position currently on board
+                if (!(e instanceof AnalysisEngineUnavailableError)) {
+                    // eslint-disable-next-line no-console
+                    console.error('Error while analyzing a position of the line', e);
+                }
             }
 
             ++done;
@@ -461,24 +548,32 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     };
 
     /**
-     * Swaps the analyzer used to compute winrate/policy at runtime, and re-analyzes the line in
-     * the background.
+     * Does not analyze anything, see setAnalyzer().
      *
-     * The evaluations already computed are kept: every analyzer here is the same engine and the
-     * same net at a different depth, reading one store that keeps the deepest search it has seen
-     * of a position. Dropping them would blank the graph on every switch, and with `KataHex
-     * live` selected it would stay blank, since that never stops searching the position on
-     * screen for the rest of the line to be evaluated.
+     * Patched here: the evaluations already computed are kept. Every analyzer here is the
+     * same engine and the same net at a different depth, reading one store that keeps the
+     * deepest search it has seen of a position. Dropping them would blank the graph on every
+     * switch, and with `KataHex live` selected it would stay blank, since that never stops
+     * searching the position on screen for the rest of the line to be evaluated.
+     */
+    const selectAnalyzer = (analyzer: AnalyzerInterface | null): void => {
+        currentAnalyzer.value?.persistCache?.();
+        currentAnalyzer.value = analyzer;
+        state.value.analyzerName = analyzer?.getName();
+
+        whiteWin.value = undefined;
+    };
+
+    /**
+     * Swaps the analyzer used to compute winrate/policy at runtime.
+     * The current position (plus its ancestors) is re-analyzed in the background.
      */
     const setAnalyzer = (analyzer: AnalyzerInterface | null): void => {
         if (analyzer === currentAnalyzer.value) {
             return;
         }
 
-        currentAnalyzer.value?.persistCache?.();
-        currentAnalyzer.value = analyzer;
-
-        whiteWin.value = undefined;
+        selectAnalyzer(analyzer);
 
         void updateAnalysis();
         void fillLineEvals();
@@ -489,7 +584,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
      * 'move' nodes are fed into a PlayingGameFacade (alternating, swap-aware) per segment,
      * 'setup' nodes are applied directly onto the view, starting a new segment after them.
      * Synchronous (no network calls): the board updates instantly. Evaluation of the path
-     * is then filled in the background (fillAncestorEvals + updateAnalysis), without blocking.
+     * is then filled in the background (fillLineEvals + updateAnalysis), without blocking.
      */
     const goToNode = (id: number): void => {
         const path = tree.getPath(id);
@@ -576,17 +671,38 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         goToNode(parentId);
     };
 
+    // See resumeAutoPlay()
+    let autoPlayPaused = false;
+
     const disableAutoPlay = (): void => {
-        state.value.autoPlay = [false, false];
+        if (!autoPlayPaused) {
+            state.value.autoPlay = [false, false];
+        }
     };
 
     /**
      * Navigates to a node from a manual user action (history tree click), which also
      * stops auto-play so the engine doesn't immediately resume from the picked position.
+     * Ignored in setup mode, it would drop stones not yet validated.
      */
     const userGoToNode = (id: number): void => {
+        if (readonly.value || state.value.setupMode) {
+            return;
+        }
+
         disableAutoPlay();
         goToNode(id);
+    };
+
+    /**
+     * Node to briefly show in the tree (scroll to it and flash it),
+     * i.e when clicking on a node mentioned in chat.
+     */
+    const highlightRequest = shallowRef<null | { id: number }>(null);
+
+    // new object each time, so that highlighting same node again triggers watchers
+    const highlightNode = (id: number): void => {
+        highlightRequest.value = { id };
     };
 
     /**
@@ -605,6 +721,23 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             userGoToNode(node.id);
         }
     };
+
+    /**
+     * Comment of the node currently displayed, empty if none.
+     * Written directly on the node, whatever the mode: not concerned by setup validation or cancellation.
+     */
+    const currentComment = computed<string>({
+        get: () => tree.getNode(currentNodeId.value).comment ?? '',
+        set: comment => {
+            const node = tree.getNode(currentNodeId.value);
+
+            if (comment === '') {
+                delete node.comment;
+            } else {
+                node.comment = comment;
+            }
+        },
+    });
 
     /**
      * Plays a move from the current position: reuses an already explored
@@ -641,11 +774,21 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             return;
         }
 
+        autoPlayPaused = false;
         playMove('pass');
     };
 
     // Guards against several auto-play passes racing each other (e.g rapid state changes).
     let autoPlayRunning = false;
+
+    /**
+     * Auto-play checked in a restored analysis waits for player to play or to change it:
+     * just opening an analysis must not make the engine play.
+     */
+    const resumeAutoPlay = (): void => {
+        autoPlayPaused = false;
+        void maybeAutoPlay();
+    };
 
     /**
      * If auto-play is enabled for the color to move, asks the analyzer for its recommended
@@ -657,10 +800,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
             return;
         }
 
-        const analyzer = currentAnalyzer.value;
+        const analyzer = activeAnalyzer.value;
         const player = state.value.currentPlayer;
 
-        if (!analyzer || state.value.setupMode || !state.value.autoPlay[player]) {
+        if (!analyzer || applyingLiveSnapshot || autoPlayPaused || state.value.setupMode || !state.value.autoPlay[player]) {
             return;
         }
 
@@ -680,9 +823,11 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         try {
             move = (await analyzer.analyzePosition({ size, color, black, white })).recommendedMove ?? null;
         } catch (e) {
-            if (!(e instanceof SearchAborted)) {
+            // Already displayed by updateAnalysis(); or the engine was taken back by the
+            // position on screen, which asks again once it is free.
+            if (!(e instanceof AnalysisEngineUnavailableError) && !(e instanceof SearchAborted)) {
                 // eslint-disable-next-line no-console
-                console.error('Error while computing the auto-play move', e);
+                console.error('Error while getting auto-play move', e);
             }
         } finally {
             autoPlayRunning = false;
@@ -691,6 +836,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         // Discard if the position or settings changed while we were computing the move.
         if (
             move === null
+            || autoPlayPaused
             || nodeId !== currentNodeId.value
             || player !== state.value.currentPlayer
             || state.value.setupMode
@@ -708,6 +854,13 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         () => void maybeAutoPlay(),
         { deep: true },
     );
+
+    // Enabling AI analyzes current line, and resumes auto-play. Disabling it hides analysis.
+    watch(aiEnabled, () => {
+        void updateAnalysis();
+        void fillLineEvals();
+        void maybeAutoPlay();
+    });
 
     // Toggling winrate/policy display for a color re-runs analysis for the current position.
     watch(
@@ -738,6 +891,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
      * remaining moves in the current evaluation line (so the tree is preserved on reload).
      */
     const syncUrlHash = (): void => {
+        if (!urlHashSynced) {
+            return;
+        }
+
         const size = gameViewRef.value?.getBoardsize() ?? 11;
         const line = currentLine.value; // root → lineLeaf
         const cursorIndex = line.findIndex(node => node.id === currentNodeId.value);
@@ -806,6 +963,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         new PlayerSettingsFacade(gameView);
 
         gameView.on('hexPointerDown', async move => {
+            if (readonly.value) {
+                return;
+            }
+
             if (state.value.setupMode) {
                 await dragPainter.pointerDown(currentTool.value, move);
             }
@@ -816,6 +977,10 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         });
 
         gameView.on('hexClicked', async move => {
+            if (readonly.value) {
+                return;
+            }
+
             if (state.value.setupMode) {
                 // Drag-capable tools already handled this cell on pointerdown, and the whole
                 // drag (even a single-cell one) is committed on pointerup by endDragPainting.
@@ -830,6 +995,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
                     await updateAnalysis();
                 }
             } else {
+                autoPlayPaused = false;
                 playMove(move);
             }
         });
@@ -902,15 +1068,15 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
      * Import a game, starting fresh: the previous tree is discarded.
      */
     const importGame = async (importedGame: ImportedGame): Promise<void> => {
-        const { boardsize, moves, playerBlackName, playerWhiteName } = importedGame;
+        const { boardsize, moves, playerBlackName, playerWhiteName, tree: importedTree } = importedGame;
 
         await rebuildBoard(boardsize);
 
         state.value.playerBlackName = playerBlackName;
         state.value.playerWhiteName = playerWhiteName;
 
-        const nodeIds = addMoveChain(moves);
-        goToNode(nodeIds[nodeIds.length - 1] ?? ROOT_ID);
+        tree.load(importedTree ?? movesToTreeNodes(moves));
+        goToNode(descendToLeaf(ROOT_ID));
     };
 
     /**
@@ -961,26 +1127,231 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     };
 
     /**
-     * Restores a state previously saved with exportAnalysis(). Throws on malformed input.
+     * Restores a whole analysis, from a file or a study. Previous tree is discarded.
+     *
+     * @throws {InvalidHexplorerStateError} On malformed data
      */
-    const importAnalysis = async (json: string): Promise<void> => {
-        const restored = JSON.parse(json) as Partial<HexplorerState>;
+    const restoreState = async (data: unknown): Promise<void> => {
+        const restored = parseHexplorerState(data);
 
-        if (typeof restored.boardsize !== 'number' || typeof restored.currentNodeId !== 'number' || !Array.isArray(restored.nodes)) {
-            throw new Error('Invalid Hexplorer analysis file.');
+        // Needed to know if saved engine can be restored
+        if (aiAvailability.value === null) {
+            await refreshEnginesStatus();
         }
 
         await rebuildBoard(restored.boardsize);
 
-        state.value = restored as HexplorerState;
-        state.value.setupMode = false;
+        state.value = {
+            ...restored,
+            analyzerName: currentAnalyzer.value?.getName(),
+        };
+        autoPlayPaused = true;
         tree.reload(); // node list now comes from the restored state; refresh the id counter
+        currentTool.value = createAlternatingTool(); // tool was holding previous state
 
-        const targetId = tree.nodes.value.some(node => node.id === state.value.currentNodeId)
-            ? state.value.currentNodeId
-            : ROOT_ID;
+        const restoredAnalyzer = analyzers.find(a => a.getName() === restored.analyzerName);
 
-        goToNode(targetId);
+        if (restoredAnalyzer && isAnalyzerAvailable(restoredAnalyzer)) {
+            selectAnalyzer(restoredAnalyzer);
+        }
+
+        goToNode(state.value.currentNodeId);
+    };
+
+    /**
+     * Restores a state previously saved with exportAnalysis(). Throws on malformed input.
+     */
+    const importAnalysis = async (json: string): Promise<void> => {
+        await restoreState(JSON.parse(json));
+    };
+
+    /**
+     * What stream viewers see: whole state, plus what is displayed but not in it
+     * (scratch setup edits, analysis of current position).
+     */
+    const getLiveSnapshot = (): HexplorerLiveSnapshot => {
+        let scratch: HexplorerLiveSnapshot['scratch'] = null;
+
+        if (state.value.setupMode) {
+            const { black, white } = getBoardStones(gameView);
+
+            scratch = {
+                stones: [
+                    ...black.map(move => ({ move, color: 0 as const })),
+                    ...white.map(move => ({ move, color: 1 as const })),
+                ],
+                marks: marksLayer.getAll(),
+            };
+        }
+
+        return {
+            state: state.value,
+            scratch,
+            analysis: displayedAnalysis.value,
+        };
+    };
+
+    /**
+     * Analysis of current position still running must not be displayed.
+     */
+    const cancelAnalysis = (): void => {
+        ++analysisRequestId;
+        analysisLoading.value = false;
+        analysisError.value = null;
+    };
+
+    /**
+     * What analysis and auto-play depend on, to know whether they must run again.
+     */
+    const getAnalysisInput = (): string => JSON.stringify({
+        size: gameView.getBoardsize(),
+        stones: getBoardStones(gameView),
+        player: state.value.currentPlayer,
+        aiEnabled: state.value.aiEnabled,
+        winrateEnabled: state.value.winrateEnabled,
+        policyEnabled: state.value.policyEnabled,
+        autoPlay: state.value.autoPlay,
+    });
+
+    /**
+     * Displays what another live session participant sent (host or editor).
+     * State is replaced in place, tools keep referencing it.
+     *
+     * @param analyze Whether to analyze new position, and auto-play (host).
+     *                Current analysis is kept if position did not change, e.g only a comment changed.
+     *                Else, analysis of the snapshot is displayed as is (viewers and editors, analysis is sent by host).
+     */
+    const applyLiveSnapshot = async (snapshot: HexplorerLiveSnapshot, analyze = false): Promise<void> => {
+        const analysisInputBefore = getAnalysisInput();
+        let reanalyze = false;
+
+        applyingLiveSnapshot = true;
+
+        try {
+            dragPainter.reset();
+
+            if (snapshot.state.boardsize !== gameView.getBoardsize()) {
+                cancelAnalysis();
+                await rebuildBoard(snapshot.state.boardsize);
+            }
+
+            const target = state.value as Record<string, unknown>;
+
+            for (const key of Object.keys(target)) {
+                if (!(key in snapshot.state)) {
+                    delete target[key];
+                }
+            }
+
+            Object.assign(target, snapshot.state);
+            tree.reload();
+
+            if (!tree.nodes.value.some(node => node.id === state.value.currentNodeId)) {
+                state.value.currentNodeId = ROOT_ID;
+            }
+
+            for (const id of [...evalsByNodeId.value.keys()]) {
+                if (!tree.nodes.value.some(node => node.id === id)) {
+                    evalsByNodeId.value.delete(id);
+                }
+            }
+
+            goToNode(state.value.currentNodeId);
+
+            // Not always the one deduced from position, e.g changed manually
+            state.value.currentPlayer = snapshot.state.currentPlayer;
+
+            actionsStack.value = new UndoableActionsStack();
+
+            if (snapshot.scratch !== null) {
+                clearBoard();
+                marksLayer.clear();
+                applySetupStones(snapshot.scratch.stones);
+
+                for (const mark of snapshot.scratch.marks) {
+                    if (mark.type === 'select') {
+                        marksLayer.setSelected(mark.move, true);
+                    } else {
+                        marksLayer.setMark(mark.move, mark.type, mark.text);
+                    }
+                }
+            }
+
+            reanalyze = analyze && getAnalysisInput() !== analysisInputBefore;
+
+            if (!analyze || reanalyze) {
+                const { analysis } = snapshot;
+
+                cancelAnalysis();
+                displayedAnalysis.value = analysis;
+                whiteWin.value = analysis?.whiteWin;
+                policyOverlayFacade.clear();
+
+                if (analysis?.policy) {
+                    policyOverlayFacade.setShowNumbers(state.value.policyShowNumbers);
+                    policyOverlayFacade.setShowBestMark(state.value.policyShowBestMark);
+                    policyOverlayFacade.apply(analysis.policy, analysis.color);
+                }
+
+                if (typeof analysis?.whiteWin === 'number' && !state.value.setupMode) {
+                    evalsByNodeId.value.set(state.value.currentNodeId, analysis.whiteWin);
+                }
+            }
+
+            // Let watchers triggered by state change run while analysis and auto-play are disabled
+            await nextTick();
+        } finally {
+            applyingLiveSnapshot = false;
+        }
+
+        if (reanalyze) {
+            void updateAnalysis();
+            void maybeAutoPlay();
+        }
+    };
+
+    /**
+     * Position currently on board, to start a match from it.
+     * Null in setup mode: position must be validated first.
+     */
+    const getMatchStartPosition = (): null | HexplorerMatchStartPosition => {
+        if (state.value.setupMode) {
+            return null;
+        }
+
+        const { black, white } = getBoardStones(gameView);
+        const getNode = (id: number) => tree.nodes.value.find(node => node.id === id);
+
+        return {
+            boardsize: gameView.getBoardsize(),
+            stones: [
+                ...black.map(move => ({ move, color: 0 as const })),
+                ...white.map(move => ({ move, color: 1 as const })),
+            ],
+            nextPlayer: state.value.currentPlayer,
+            swapAllowed: canSwapAfter(tree.getNode(currentNodeId.value), getNode),
+        };
+    };
+
+    /**
+     * Adds moves of a match played from a node as a variation, and shows its last position.
+     * Does nothing if start node has been deleted meanwhile.
+     */
+    const addMatchVariation = (startNodeId: number, moves: HexMove[]): void => {
+        if (!tree.nodes.value.some(node => node.id === startNodeId)) {
+            return;
+        }
+
+        let parentId = startNodeId;
+
+        for (const move of moves) {
+            parentId = (tree.findChildByMove(parentId, move) ?? tree.addMove(parentId, move)).id;
+        }
+
+        if (!state.value.setupMode) {
+            disableAutoPlay();
+            goToNode(parentId);
+        }
     };
 
     /**
@@ -1002,7 +1373,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
     const bindKeys = () => {
         // Runs the given handler, unless the user is typing in a form field.
         const boardShortcut = (run: () => void) => (e: KeyboardEvent) => {
-            if (isTyping(e)) {
+            if (isTyping(e) || readonly.value) {
                 return;
             }
 
@@ -1034,6 +1405,7 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         state,
         whiteWin,
         analysisLoading,
+        analysisError,
         currentTool,
         evalHistory,
         evalCursorIndex,
@@ -1041,6 +1413,8 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         goToEvalIndex,
         goToNode,
         userGoToNode,
+        highlightRequest,
+        highlightNode,
         goToParent,
         goToFirstChild,
         pass,
@@ -1060,10 +1434,27 @@ export const useHexplorer = (fromHash?: string, analyzer: AnalyzerInterface | nu
         exportSgf,
         exportAnalysis,
         importAnalysis,
+        restoreState,
+        currentComment,
+        resumeAutoPlay,
         currentAnalyzer,
+        aiEnabled,
         setAnalyzer,
+        isAnalyzerAvailable,
+        isEngineAvailable,
+        refreshEnginesStatus,
+        readonly,
+        getLiveSnapshot,
+        applyLiveSnapshot,
+        getMatchStartPosition,
+        addMatchVariation,
     };
 };
+
+/**
+ * Gives sidebar tabs access to the Hexplorer of the page.
+ */
+export const hexplorerKey: InjectionKey<ReturnType<typeof useHexplorer>> = Symbol('hexplorer');
 
 const initGameViewFromUrlHash = (hash?: string): { gameView: GameView, playingGameFacade: PlayingGameFacade, moves: HexMove[], cursorMoveCount?: number } => {
     if (!hash || hash.length <= 1) {

@@ -1,0 +1,131 @@
+// Global utils functions
+
+import { ListenerSignature, TypedEmitter } from 'tiny-typed-emitter';
+
+/**
+ * Regex pattern of a uuid, e.g a game publicId. Use with "i" flag to accept uppercase.
+ */
+export const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+/**
+ * For .sort() function, sort by a given field only.
+ * Ex:
+ *
+ * list.sort(by(item => item.field));
+ */
+export const by = <T>(field: (t: T) => string | number, ascOrDesc: 'asc' | 'desc' = 'asc') => {
+    return (a: T, b: T) => {
+        const aValue = field(a);
+        const bValue = field(b);
+
+        if (ascOrDesc === 'desc') {
+            return aValue < bValue ? 1 : -1;
+        }
+
+        return aValue > bValue ? 1 : -1;
+    };
+};
+
+/**
+ * Truncate text and add "…" if needed.
+ */
+export const truncateText = (text: string, maxLength = 24): string => {
+    if (text.length <= maxLength) {
+        return text;
+    }
+
+    return text.substring(0, maxLength) + '…';
+};
+
+/**
+ * Used to type check type orm @Index.
+ * Usage:
+ * ```
+ *   @Index(keysOf<Game>()('state', 'opponentType'))
+ * ```
+ */
+export const keysOf = <T>() => <K extends keyof T>(...keys: K[]) => keys;
+
+/**
+ * When catching, allow to log error as string, depending on its type (Error, string, ...).
+ *
+ * try { }
+ * catch (e) { log(anyErrorToString(e)) }
+ */
+export const errorToString = (e: unknown): string => {
+    if (e instanceof Error) {
+        return e.message;
+    }
+
+    return String(e);
+};
+
+/**
+ * Returns an object of params that can be sent to logger parameters.
+ *
+ * Example:
+ *
+ * ```
+ * logger.error('Failed to ...', errorToLogger(e));
+ *
+ * // or
+ *
+ * logger.error('Failed to ...', {
+ *     ...errorToLogger(e),
+ *     otherParam: 'xxx',
+ * });
+ * ```
+ */
+export const errorToLogger = (e: unknown): { message: string, stacktrace: string } => {
+    if (e instanceof Error) {
+        return {
+            message: e.message,
+            stacktrace: e.stack ?? 'No stack trace in this Error',
+        };
+    }
+
+    return {
+        message: String(e),
+        stacktrace: 'No stack trace because not an Error instance',
+    };
+};
+
+/**
+ * Get a random number around mean given a standard deviation.
+ */
+export const gaussianRandom = (mean = 0, deviation = 1): number => {
+    const u = 1 - Math.random(); // Converting [0,1) to (0,1]
+    const v = Math.random();
+    const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+
+    // Transform to the desired mean and standard deviation:
+    return z * deviation + mean;
+};
+
+/**
+ * Generates a random string that can go in url
+ */
+export const randomSlug = (length = 6): string => {
+    let randomString = '';
+
+    while (randomString.length < length) {
+        randomString += (1E24 * Math.random()).toString(36).substring(0, length);
+    }
+
+    return randomString.substring(0, length);
+};
+
+/**
+ * Calls emitter.on(event, listener), and returns a callback to dispose the listener.
+ */
+export const on = <
+  L extends ListenerSignature<L>,
+  K extends keyof L
+>(
+        emitter: TypedEmitter<L>,
+        event: K,
+        listener: L[K],
+    ) => {
+    emitter.on(event, listener);
+    return () => emitter.off(event, listener);
+};

@@ -1,6 +1,7 @@
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './app.css';
 import { createApp } from 'vue';
+import { createPinia } from 'pinia';
 import i18next, { t } from 'i18next';
 import unoverlay from '@overlastic/vue';
 import en from './shared/app/en.json';
@@ -36,6 +37,9 @@ app.config.globalProperties.$t = t;
 // Overlays are mounted in an app of their own, which only inherits $t from this one once
 // overlastic has been told which app is the parent.
 app.use(unoverlay);
+
+// The hexplorer keeps one local setting in a store, as PlayHex does.
+app.use(createPinia());
 
 app.mount('#app');
 

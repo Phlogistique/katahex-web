@@ -1,8 +1,36 @@
-/*
- * PlayHex's hexworld.ts, without the link builders: those take a HostedGame, which drags in
- * the whole model layer (typeorm, class-transformer) for something this app has no use for.
+import type { Outcome, PlayerIndex } from '../game-engine/Types.js';
+import type { HexMove } from '@playhex/move-notation';
+
+/**
+ * Game fields needed to create a Hexworld string,
+ * so that it can also be created from a local game.
+ *
+ * Patched here: PlayHex picks these from its Game model, which drags in the whole model
+ * layer (typeorm, class-transformer).
  */
-import type { HexMove } from '../move-notation/hex-move-notation.js';
+type HexworldGame = { boardsize: number, moves: HexMove[], outcome: null | Outcome, winner: PlayerIndex | null };
+
+const outcomeToHexworld = (outcome: null | Outcome, winner: PlayerIndex | null) => {
+    if (winner == null)
+        return '';
+    const lost = winner === 0 ? 'w' : 'b';
+    switch (outcome) {
+        case 'resign': return `:r${lost}`;
+        case 'time': return `:f${lost}`;
+        case 'forfeit': return `:f${lost}`;
+        default: return '';
+    }
+};
+
+/**
+ * Generate a Hexworld review link from a game.
+ * Example: "https://hexworld.org/board/#15c1,e6:sf7i8g10j10l6i4h3b4c13h13l10l9l8m8m9n8k12o8"
+ * @param game
+ * @param orientation Board rotation from 0 to 11, where 0 is the "Flat" one.
+ */
+export const gameToHexworldLink = (game: HexworldGame, orientation: number = 11): string => {
+    return `https://hexworld.org/board/#${createHexworldString(game, orientation)}`;
+};
 
 /**
  * Encodes moves as a Hexworld moves string, 'e6:sf7i8g10j10'.
@@ -20,6 +48,54 @@ export const movesToHexworldString = (moves: HexMove[]): string => moves
     })
     .join('')
 ;
+
+/**
+ * Generate Hexworld string from game, '15c1,e6:sf7i8g10j10'
+ * to pass as query hash.
+ */
+export const createHexworldString = (game: HexworldGame, orientation: number = 11): string => {
+    if (orientation < 0 || orientation > 11)
+        throw new Error('Invalid board orientation');
+    const moves = movesToHexworldString(game.moves);
+    const size = game.boardsize;
+    const outcome = outcomeToHexworld(game.outcome, game.winner);
+    // from 1 to 12 (closed), shifted by -2
+    const hexworldRotation = (((orientation - 2) % 12) + 11) % 12 + 1;
+    const rotationConfig = hexworldRotation === 10 ? '' : 'r' + hexworldRotation;
+    return `${size}${rotationConfig}c1,${moves}${outcome}`;
+};
+
+/**
+ * Shorten a Hexworld link to display it in chat without taking too much place.
+ * Keeps board size, the 2 first moves and the 2 last moves.
+ * Special tokens (":p", ":s") are kept attached to the following move.
+ *
+ * Example:
+ *      "https://hexworld.org/board/#14r9c1,a14e4k4j11g9:pf2:pn7:pl5"
+ *  =>  "hexworld.org/14,a14e4..:pn7:pl5"
+ *
+ * Returns null if the link is not a Hexworld board link.
+ */
+export const shortenHexworldLink = (link: string): null | string => {
+    const match = link.match(/^https?:\/\/(?:www\.)?hexworld\.org\/board\/?#(\d+(?:x\d+)?)[^,]*(?:,(.*))?$/);
+
+    if (!match) {
+        return null;
+    }
+
+    const [, size, movesStr = ''] = match;
+    const moves = movesStr.replace(/,/g, '').match(/(?::[a-z])*[a-z]+\d+|:[a-z]/g) ?? [];
+
+    if (moves.length === 0) {
+        return `hexworld.org/${size}`;
+    }
+
+    const shortMoves = moves.length <= 4
+        ? moves.join('')
+        : moves.slice(0, 2).join('') + '..' + moves.slice(-2).join('');
+
+    return `hexworld.org/${size},${shortMoves}`;
+};
 
 /**
  * Parses 14r1c1,d3:sa3... to { size: 14, moves: ["d3", "swap-pieces",  "a3", ...]' }

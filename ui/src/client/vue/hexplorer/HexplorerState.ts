@@ -1,46 +1,54 @@
-import { createRootNodes, ROOT_ID, TreeNode } from './GameTree.js';
+export { createHexplorerState, type HexplorerState } from '../../../shared/app/hexplorerStudy.js';
 
 /**
- * Raw, plain state shared between useHexplorer and the tools.
- * Kept as a POJO wrapped in a single ref so tools can mutate
- * it directly and have changes stay reactive.
- *
- * Fully JSON-serializable, so it doubles as the download/restore format
- * of a whole analysis (board size, move tree and current position included).
+ * Key in history state to open Hexplorer with an analysis,
+ * as a json string that importAnalysis() can restore.
+ * Allows to pass a position with setup stones, which url hash cannot hold.
  */
-export type HexplorerState = {
-    setupMode: boolean;
-    currentPlayer: 0 | 1;
-    playerBlackName?: string;
-    playerWhiteName?: string;
+export const HEXPLORER_ANALYSIS_STATE_KEY = 'hexplorerAnalysis';
 
-    // Per-color [red, blue] settings, applied when it's this color's turn.
-    // autoPlay: play the analyzer's recommended move automatically.
-    // winrateEnabled: show the whiteWin bar.
-    // policyEnabled: show the policy layer.
-    autoPlay: [boolean, boolean];
-    winrateEnabled: [boolean, boolean];
-    policyEnabled: [boolean, boolean];
-    policyShowNumbers: boolean;
-    policyShowBestMark: boolean;
+/**
+ * History state key to open Hexplorer on a given tab, e.g "play".
+ */
+export const HEXPLORER_TAB_STATE_KEY = 'hexplorerTab';
 
-    // Board size, move tree and current position, kept live in the state (the GameView,
-    // GameTree and currentNodeId are views/mirrors of these), so the whole analysis
-    // round-trips by simply serializing/restoring this single object.
-    boardsize: number;
-    currentNodeId: number;
-    nodes: TreeNode[];
+/**
+ * History state key to start streaming as soon as Hexplorer is opened,
+ * and invite a player to edit analysis together, e.g opponent of an ended game.
+ */
+export const HEXPLORER_ANALYZE_TOGETHER_STATE_KEY = 'hexplorerAnalyzeTogether';
+
+export type HexplorerAnalyzeTogether = {
+    /**
+     * Player invited to edit analysis.
+     */
+    playerPublicId: string;
+
+    /**
+     * Title of the study created to stream analysis.
+     */
+    title: string;
+
+    /**
+     * Names of red and blue players, instead of colors.
+     */
+    playerNames: [string, string];
 };
 
-export const createHexplorerState = (boardsize = 11): HexplorerState => ({
-    setupMode: false,
-    currentPlayer: 0,
-    autoPlay: [false, false],
-    winrateEnabled: [true, true],
-    policyEnabled: [true, true],
-    policyShowNumbers: false,
-    policyShowBestMark: false,
-    boardsize,
-    currentNodeId: ROOT_ID,
-    nodes: createRootNodes(),
-});
+export const parseHexplorerAnalyzeTogether = (value: unknown): null | HexplorerAnalyzeTogether => {
+    if (typeof value !== 'object' || value === null) {
+        return null;
+    }
+
+    const { playerPublicId, title, playerNames } = value as Record<string, unknown>;
+
+    if (typeof playerPublicId !== 'string' || typeof title !== 'string') {
+        return null;
+    }
+
+    if (!Array.isArray(playerNames) || playerNames.length !== 2 || !playerNames.every(name => typeof name === 'string')) {
+        return null;
+    }
+
+    return { playerPublicId, title, playerNames: [playerNames[0], playerNames[1]] };
+};

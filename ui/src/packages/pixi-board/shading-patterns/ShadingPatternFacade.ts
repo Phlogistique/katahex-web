@@ -1,0 +1,24 @@
+import { createShadingPattern, ShadingPatternType } from '@playhex/shading-patterns';
+import GameView from '../GameView.js';
+
+/**
+ * A facade to help set and change game view shading pattern.
+ */
+export class ShadingPatternFacade
+{
+    constructor(
+        private gameView: GameView,
+    ) {}
+
+    setShadingPattern(name: ShadingPatternType, intensity = 0.5, options: unknown = null): void
+    {
+        const shadingPattern = createShadingPattern(name, options);
+        const size = this.gameView.getBoardsize();
+
+        for (let row = 0; row < size; ++row) {
+            for (let col = 0; col < size; ++col) {
+                this.gameView.setCellShading({ row, col }, shadingPattern.calc(row, col, size) * intensity);
+            }
+        }
+    }
+}

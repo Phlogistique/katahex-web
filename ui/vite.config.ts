@@ -40,8 +40,14 @@ export default defineConfig(({ mode }) => {
         publicDir: page ? here('../public-web') : false,
         resolve: {
             alias: {
-                // The board renderer is a yarn workspace inside the playhex repo, vendored here.
-                '@playhex/pixi-board': src('shared/pixi-board/index.ts'),
+                // PlayHex's workspace packages, vendored at their paths under src/packages.
+                // Longest first: an alias matches as a prefix.
+                '@playhex/pixi-board/conditional-moves': src('packages/pixi-board/conditional-moves.ts'),
+                '@playhex/pixi-board/shading-patterns': src('packages/pixi-board/shading-patterns.ts'),
+                '@playhex/pixi-board': src('packages/pixi-board/index.ts'),
+                '@playhex/move-notation': src('packages/move-notation/index.ts'),
+                '@playhex/conditional-moves': src('packages/conditional-moves/index.ts'),
+                '@playhex/shading-patterns': src('packages/shading-patterns/index.ts'),
                 'vue-router': src('stubs/vue-router.ts'),
                 '@unhead/vue': src('stubs/unhead.ts'),
                 '@engine': `${katahexWeb}/src`,
