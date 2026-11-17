@@ -718,26 +718,123 @@ Two measurement traps behind them, both worth avoiding:
 ## On a rented GPU
 
 The same ui can run its engine on a GPU rented by the hour from vast.ai instead of on the
-phone. Three pieces:
+phone. On an RTX 3060 at about $0.06 an hour the b28 net searches some 900 visits a second on
+11x11, four times what the laptop's Iris Xe gets out of a net a third its size.
 
-- `server/`: a Docker image with upstream KataHex (`hzyhhzy/KataGomo`, branch `Hex2024`)
-  built for CUDA, HZY's 20250131 b28 net (`hex3_27x_b28`, the strongest he has released), and
-  `server.py`, which carries the ui's `Native` bridge over a websocket. Upstream writes cells
-  the way a Go board would print them; `hexgui-coords.patch` puts back the HexGUI `a1`
-  notation the ui speaks, taken from Selinger's fork under `engine/`.
-  `.github/workflows/server-image.yml` builds it to `ghcr.io/phlogistique/katahex-server`.
-- `android/`: the app. A WebView holding the ui built as one page, whose `Native` rents the
-  cheapest suitable GPU (single GPU, Turing or newer, CUDA 12.2+, a direct port, 95%
-  reliability, under `KATAHEX_MAX_DPH` dollars an hour), waits for it, and talks to `server.py` over a
-  websocket on the mapped port, authenticated by a random token passed in at rental.
-  `VASTAI_API_KEY=... android/build.sh` builds it, **with the key inside the apk**: do not
-  publish the apk.
-- Teardown, three ways. Quitting through the back button destroys the instance. The app
-  pings only while it is on screen, and the server destroys its own instance, with the
-  per-instance `CONTAINER_API_KEY` vast puts in every container, once it has heard nothing
-  for `IDLE_TIMEOUT` (10 minutes) -- or, failing the API, exits, which stops the container
-  and the GPU's meter with it. And on its next start the app destroys any instance it
-  labelled `katahex-app` and lost track of. `MAX_LIFETIME` (12 hours) caps the rest.
+    server/        the engine on CUDA behind a websocket, as a Docker image
+    android/       the app: the ui in a WebView, renting and talking to that image
+
+### The engine
+
+Upstream KataHex, not the fork under `engine/`: `hzyhhzy/KataGomo`, branch `Hex2024`, pinned
+in `server/Dockerfile` (4bbf953, July 2026). The fork's changes are for WebAssembly;
+upstream has moved on since (ONNX and TensorRT updates, move-limit openings) and none of it
+touches analysis.
+
+One patch, `server/hexgui-coords.patch`. Upstream names cells the way a Go board would print
+the Hex board for Sabaki -- doubled x, y counted from the top -- so `f6` is not a cell to it and
+the analysis engine answers the ui's first query with "Could not parse board location". The
+patch puts back `Location::toString` and `tryOfString` from Selinger's fork, `a1`..`s19` as
+HexGUI writes them, which is what the ui sends and expects. The internal board is the same in
+both, so nothing else moves.
+
+The net is HZY's newest, `hex3_27x_b28.bin.gz` from the KataHex 20250131 release: a
+b28c512nbt retrained on the 2024 data, +100 Elo on 15x15 and +200 on 19x19 over the 2024 net,
+the strongest released for boards up to 27x27. Its sibling `hex3_mm19x_b28` supports the
+move-limit mode and is slightly weaker; it is not used. The image pins its sha256.
+
+Built with `-DMAX_BOARD_LEN=19`, matching the ui's limit. The CUDA backend needs no tuning,
+unlike OpenCL, which would spend minutes tuning on every fresh machine.
+
+### The server
+
+`server/server.py` carries the ui's engine bridge -- `Native.start(size)`, `Native.query(json)`,
+and the engine's stdout and stderr back -- over one websocket, as JSON text frames:
+
+    client -> server   {"t": "start", "size": 11}      (re)start the engine for a board size
+                       {"t": "q", "q": "<query json>"} one line to the engine's stdin
+                       {"t": "stop"}                    stop the engine
+                       {"t": "ping"}                    a sign of life
+                       {"t": "bye"}                     destroy this machine now
+    server -> client   {"t": "line", "l": "..."}        a line of the engine's stdout
+                       {"t": "log", "l": "..."}         a line of its stderr
+                       {"t": "pong", "left": s, ...}    seconds before the idle switch fires
+
+`ws://host:port/ws?token=...`, the token random per rental and passed in its environment.
+`GET /health` answers `ok` without one, which is how the app knows the machine is up before it
+has anything to say. Plain ws, not wss: the machine is reached by bare IP and a port vast maps
+at random, so there is no certificate to have, and the token is the only secret on the wire.
+
+- The engine starts at boot on 11x11 (`WARMUP_SIZE`), so the first board is ready when the
+  app connects. A client that asks for the size already running keeps the engine and its
+  cache: the server sends the engine a `terminate_all` for whatever the last client left
+  searching and replays the "ready to begin handling requests" line, which is what makes
+  the ui resend its pending and live queries. Its own `terminate_all` reply is not forwarded.
+- 32 search threads whatever the core count (`SEARCH_THREADS`), batch 64, two analysis
+  threads. Threads are what make batches, and they spend their time waiting on the GPU, not
+  on a core: sized from the cpu count, an RTX 3060 on a 4-core slice got 8 and ran at half
+  speed (457 against 928 visits a second).
+- `BENCH_VISITS` runs one search at boot and logs its speed. A machine nobody can reach yet
+  -- this repository's CI, say -- says through vast's log API whether its GPU works.
+
+### The dead man's switch
+
+Every message from a client is a sign of life. With none for `IDLE_TIMEOUT` (600 s), none at
+all for `FIRST_CONNECT_TIMEOUT` (900 s) after boot, or `MAX_LIFETIME` (12 h) after boot, the
+server destroys its own instance -- `DELETE /api/v0/instances/$CONTAINER_ID/` with
+`CONTAINER_API_KEY`, the per-instance key vast puts in every container, which can start, stop
+or destroy that instance and nothing else, so the user's own key never leaves the phone -- and
+then exits whatever the API answered, which stops the container and the GPU's meter with it.
+websocket-level pings do not count: only messages the app chose to send.
+
+The app pings every 30 s while it is on screen and not otherwise, so a phone put away, killed
+or out of signal stops paying within ten minutes. Tested on vast: an instance left with no
+client destroyed itself at 900 s, to the second.
+
+What it cannot cover: a host whose docker never starts the container, since there is then no
+server to run the switch. The app handles those (below).
+
+### The image
+
+`ghcr.io/phlogistique/katahex-server`, public, built by `.github/workflows/server-image.yml`
+on every push touching `server/`, tagged `latest` and the commit sha.
+
+1.22 GB compressed. It was 2.39 GB on `nvidia/cuda:12.2.2-cudnn8-runtime`, of which 1.27 GB
+was one layer of every CUDA library (cuFFT, cuSPARSE, NPP, cuSOLVER...) and 710 MB all of
+cuDNN 8, training included. The engine loads cuBLAS, cuBLASLt and cuDNN's inference half
+(`libcudnn`, `libcudnn_ops_infer`, `libcudnn_cnn_infer`), so the image is now `cuda:base` plus
+those, each library its own layer so that a host pulls them in parallel -- the biggest is
+349 MB -- and websockets vendored rather than pip and its dependencies.
+
+CUDA 12.2 because every host offered runs a driver of 535 or later; the app asks for
+`cuda_max_good >= 12.2`. `CMAKE_CUDA_ARCHITECTURES` up to 90 includes PTX, which the driver
+compiles for newer cards.
+
+### Renting
+
+`android/.../Vast.java` and `RemoteEngine.java`, against vast's REST API:
+
+- Search `GET /api/v0/bundles/?q=`: on demand, verified, one GPU, `compute_cap >= 750`,
+  `cuda_max_good >= 12.2`, a direct port, reliability 0.95, 100 Mbit/s down, 20 GB of disk,
+  4 GB of GPU memory, under `KATAHEX_MAX_DPH` ($0.50/h), cheapest first. GTX cards are skipped
+  by name: a GTX 16xx is compute capability 7.5 without tensor cores.
+- Rent `PUT /api/v0/asks/{offer}/` with `runtype: args` (the image's own entrypoint),
+  `env: "-e KATAHEX_TOKEN=... -p 8765:8765"`, label `katahex-app`, `cancel_unavail`. The
+  cheapest offer is often gone by the time it is asked for; the app walks down five.
+- Poll `GET /api/v0/instances/{id}/` until `actual_status` is `running` and `ports["8765/tcp"]`
+  is mapped, then `/health`, then the websocket. `status_msg` meanwhile is docker's pull
+  progress, which the page shows.
+- A host whose own docker fails -- seen: `unknown flag: --runtime`, with the instance left
+  `loading` forever -- is recognised by an error in `status_msg` while not running: the
+  instance is destroyed, the machine id kept in a blacklist on the phone, and the next offer
+  rented. Anything not up in ten minutes is given up on the same way.
+- A machine running and mapped that still does not answer `/health` after a minute is most
+  likely a network blocking high ports, and the page says so.
+- On start the app reconnects to the instance it left running, if it is still there, and
+  destroys any other `katahex-app` instance it lost track of.
+
+Back asks, and "Quit and destroy" deletes the instance. Any other way out leaves it to the
+switch.
 
 ### Which GPU
 
@@ -750,12 +847,54 @@ phone. Three pieces:
 | RTX 2060 | 0.062 | 24             | 740      | 430k            |
 | RTX 3060 | 0.054 | 8              | 457      | 300k            |
 | RTX 3060 | 0.056 | 32             | 928      | 600k            |
+| RTX 3070 | 0.056 | 32             | 917 (a 3000-visit search) | 590k |
 | RTX 4070 | 0.116 | 32             | 1331     | 410k            |
 | RTX 4090 | 0.374 | 32             | 2488     | 240k            |
 
-The GPU is the bottleneck, and fp16 is the whole story at the cheap end: Pascal has no fast
-half precision, so the cheapest card by the hour is the dearest by the visit, and the app asks
-for compute capability 7.5 or better. Search threads are the other lever -- they spend their
-time waiting on the GPU, so the server runs 32 whatever the core count, where sizing them from
-the cpu count halved a 3060 on a 4-core slice. Past the 3060, more money buys speed at a worse
-rate; the 4090 run is short enough that its ramp-up shows, so it may be undersold.
+The GPU is the bottleneck: on the 1070, 232 visits a second at ~17.5 GFLOP an evaluation is
+about 4 TFLOPS of the card's 6.5. fp16 is the whole story at the cheap end. Pascal has no fast
+half precision, so the cheapest card by the hour is the dearest by the visit; from Turing on
+KataGo runs fp16 on tensor cores and a 3060 does four times a 1070 for the same price. Past
+the 3060 money buys speed at a worse rate. The 4090's search was short enough for its ramp-up
+to show, so it may be undersold.
+
+### Startup
+
+From the rental to an engine ready to answer:
+
+| case                                         | container running | engine ready |
+| -------------------------------------------- | ----------------- | ------------ |
+| 2.39 GB image, RTX 3070 in Nevada            | 76 s              | ~85 s        |
+| 1.22 GB image, same machine an hour later    | 135 s             | ~145 s       |
+| 2.39 GB image, GTX 1070s in South Korea      | 135-150 s         | ~2.5 min     |
+| stopped and restarted, same machine          | 21 s              | ~30 s        |
+
+Nearly all of it is docker pulling the image, and a host's bandwidth to ghcr.io varies more
+from one hour to the next than halving the image saves: the same Nevada machine pulled at
+about 60 MB/s, then at about 10. The figure vast advertises (`inet_down`) is measured to the
+internet at large and predicts little. The engine itself is up 6-9 s after the container:
+CUDA initialisation and the net onto the GPU.
+
+Stopping instead of destroying keeps the disk, image included, on the host, and a restart
+takes about 30 s whatever its bandwidth. A stopped instance is billed for its disk only: hosts
+ask $0.13-0.40 per GB per month, typically $0.20, so the 12 GB the image needs is $2.40-3.20 a
+month. The catch is that the GPU can be rented by someone else while it is stopped, and the
+restart then waits. Not implemented.
+
+### The app
+
+A WebView around the ui built as one inlined page (`npm --prefix ui run build`, the default
+mode), whose `window.Native` is `RemoteEngine`. Progress goes to the page through
+`onEngineProgress`, which it shows while the engine is not ready, and to a bar under the
+board, which also shows the GPU, its price and the time left before the idle switch. Tapping
+the bar opens a menu: quit and destroy, or change the vast.ai key. Android 15 draws apps under
+the system bars; the root view pads for them.
+
+Two builds:
+
+- `android/build.sh` asks for a vast.ai key on first start and keeps it in the app's
+  preferences. This is what `.github/workflows/android-release.yml` builds and attaches to
+  every GitHub release. Signed with the `ANDROID_KEYSTORE` secret (a base64 `.jks`, with
+  `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS`) when the repository has it, so that
+  releases install over each other; with a throwaway debug key otherwise.
+- `VASTAI_API_KEY=... android/build.sh` builds the key in. That apk is as secret as the key.
