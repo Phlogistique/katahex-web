@@ -43,6 +43,11 @@ final class RemoteEngine {
     private static final String PREF_INSTANCE = "instance";
     private static final String PREF_TOKEN = "token";
     private static final String PREF_INFO = "info";
+    /** Machines that failed to start our container, never to be rented again. */
+    private static final String PREF_BROKEN = "broken";
+    /** What a host's status says when its docker, rather than our image, has failed. */
+    private static final java.util.regex.Pattern HOST_FAILURE = java.util.regex.Pattern.compile(
+        "(?i)error|unknown flag|usage:|failed|cannot|no such|not found|denied");
 
     private final OkHttpClient http = new OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -206,7 +211,7 @@ final class RemoteEngine {
             JSONObject offer = offers.getJSONObject(i);
             String gpu = offer.optString("gpu_name", "GPU");
             // A GTX 16xx is Turing without the tensor cores, so as slow as the Pascal it replaced.
-            if (gpu.startsWith("GTX")) {
+            if (gpu.startsWith("GTX") || brokenMachines().contains(String.valueOf(offer.optLong("machine_id")))) {
                 continue;
             }
             tried++;
@@ -224,6 +229,10 @@ final class RemoteEngine {
             }
         }
         throw last;
+    }
+
+    private java.util.Set<String> brokenMachines() {
+        return prefs.getStringSet(PREF_BROKEN, java.util.Collections.emptySet());
     }
 
     private static boolean dead(JSONObject instance) {
@@ -247,6 +256,16 @@ final class RemoteEngine {
                 throw new IOException("the machine stopped (" + instance.optString("status_msg") + ")");
             }
             String status = instance.optString("actual_status", "starting");
+            String message = instance.optString("status_msg", "");
+            if (!"running".equals(status) && HOST_FAILURE.matcher(message).find()) {
+                vast.destroy(id);
+                java.util.Set<String> broken = new java.util.HashSet<>(brokenMachines());
+                broken.add(String.valueOf(instance.optLong("machine_id")));
+                prefs.edit().remove(PREF_INSTANCE).putStringSet(PREF_BROKEN, broken).apply();
+                String first = message.trim().split("\n")[0];
+                throw new IOException("that machine is broken (" + first.substring(0, Math.min(60, first.length()))
+                    + "), renting another");
+            }
             String address = address(instance);
             long waited = (System.currentTimeMillis() - since) / 1000;
             boolean unreachable = false;
@@ -270,7 +289,8 @@ final class RemoteEngine {
                     detail.isEmpty() || "null".equals(detail) ? "" : ": " + detail.substring(0, Math.min(80, detail.length())),
                     waited));
             }
-            if (waited > 20 * 60) {
+            // A pull takes two or three minutes; past ten something is wrong with the machine.
+            if (waited > 10 * 60) {
                 vast.destroy(id);
                 prefs.edit().remove(PREF_INSTANCE).apply();
                 throw new IOException("the machine took too long to start, trying another");
