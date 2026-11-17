@@ -25,6 +25,42 @@ import { canSwapAfter, movesToTreeNodes, parseHexplorerState } from '../../../..
 import type { HexplorerLiveSnapshot, HexplorerMatchStartPosition } from '../../../../shared/app/hexplorerLive.js';
 import { useAnalysisEngines } from './useAnalysisEngines.js';
 import { SearchAborted } from '../../../../engine.js';
+import type { CellLabel } from '../../../../packages/pixi-board/facades/PolicyOverlayFacade.js';
+import type { AnalysisOutput } from '../../../../shared/app/hexplorer.js';
+import usePlayerLocalSettingsStore from '../../../stores/playerLocalSettingsStore.js';
+
+/** 1234 visits as "1.2k": a cell has room for four characters. */
+const formatVisits = (visits: number): string => visits < 1000
+    ? String(visits)
+    : visits < 10000 ? `${(visits / 1000).toFixed(1)}k` : `${Math.round(visits / 1000)}k`;
+
+/**
+ * Patched here: each searched candidate's winrate, for the player to move, over its visits,
+ * written on its cell in place of the policy when the AI tab asks for it.
+ */
+const moveInfoLabels = (result: AnalysisOutput, color: 'black' | 'white'): null | CellLabel => {
+    const infos = result.moveInfos;
+
+    if (!usePlayerLocalSettingsStore().localSettings.hexplorerShowMoveInfos || !infos) {
+        return null;
+    }
+
+    return (row, col) => {
+        const info = infos[coordsToMove({ row, col })];
+
+        if (!info) {
+            return null;
+        }
+
+        const win = color === 'white' ? info.whiteWin : 1 - info.whiteWin;
+
+        // Hex winrates saturate: whoever is ahead, every candidate reads near 0 or 100, and
+        // the decimal there is what tells the moves apart.
+        const percent = win < 0.1 || win > 0.9 ? (Math.round(win * 1000) / 10).toFixed(1) : String(Math.round(win * 100));
+
+        return `${percent}%\n${formatVisits(info.visits)}`;
+    };
+};
 
 /**
  * Walks a square board and splits the stones it holds into a black and a white move list,
@@ -345,6 +381,7 @@ export const useHexplorer = (fromHash: string, analyzers: AnalyzerInterface[], o
         if (showPolicy && result.policy) {
             policyOverlayFacade.setShowNumbers(state.value.policyShowNumbers);
             policyOverlayFacade.setShowBestMark(state.value.policyShowBestMark);
+            policyOverlayFacade.setLabels(moveInfoLabels(result, color));
             policyOverlayFacade.apply(result.policy, color);
         }
 
@@ -868,6 +905,9 @@ export const useHexplorer = (fromHash: string, analyzers: AnalyzerInterface[], o
         () => void updateAnalysis(),
         { deep: true },
     );
+
+    // Winrates and visits come from the stored analysis, which updateAnalysis() reads again.
+    watch(() => usePlayerLocalSettingsStore().localSettings.hexplorerShowMoveInfos, () => void updateAnalysis());
 
     // Toggling policy display options just re-renders the cached overlay, no new analysis needed.
     watch(

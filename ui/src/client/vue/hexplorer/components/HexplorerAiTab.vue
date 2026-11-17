@@ -4,13 +4,18 @@
  *
  * Patched here: auto-play can be set on both colours at once, so the engine plays itself.
  * useHexplorer is written for that; PlayHex locks it out because its analyzers are a server
- * it would be hammering, where here the engine is the user's own.
+ * it would be hammering, where here the engine is the user's own. And a checkbox puts each
+ * candidate's winrate and visits on the board in place of the policy numbers.
  */
 import { computed, inject } from 'vue';
+import { storeToRefs } from 'pinia';
+import usePlayerLocalSettingsStore from '../../../stores/playerLocalSettingsStore.js';
 import { hexplorerKey } from '../composables/useHexplorer.js';
 import type { AnalyzerInterface } from '../analyzers/AnalyzerInterface.js';
 import HexplorerPlayerNameInput from './HexplorerPlayerNameInput.vue';
 import { IconExclamationTriangle, IconPercent, IconStarFill } from '../../icons.js';
+
+const { localSettings } = storeToRefs(usePlayerLocalSettingsStore());
 
 const props = defineProps<{
     analyzers: AnalyzerInterface[];
@@ -141,6 +146,16 @@ const isCurrentAnalyzerUnavailable = computed(() => analysisError.value === 'eng
                     :disabled="!aiEnabled"
                 >
                 <label class="form-check-label small d-flex align-items-center gap-1" for="policy-show-best-mark"><IconStarFill /> {{ $t('hexplorer.policy_show_best_mark') }}</label>
+            </div>
+            <div class="form-check form-check-inline mb-0">
+                <input
+                    id="policy-show-move-infos"
+                    type="checkbox"
+                    class="form-check-input"
+                    v-model="localSettings.hexplorerShowMoveInfos"
+                    :disabled="!aiEnabled"
+                >
+                <label class="form-check-label small" for="policy-show-move-infos">{{ $t('hexplorer.show_move_infos') }}</label>
             </div>
         </div>
     </div>

@@ -38,7 +38,7 @@ These stand in for parts of PlayHex that only make sense with its server behind 
 the paths is what lets the copied files stay plain copies.
 
     src/client/services/board-view-facades/PlayerSettingsFacade.ts   no account: fixed settings
-    src/client/stores/playerLocalSettingsStore.ts   the one local setting the hexplorer reads
+    src/client/stores/playerLocalSettingsStore.ts   the local setting the hexplorer reads, and ours
     src/client/vue/hexplorer/composables/useAnalysisEngines.ts   our analyzers, always available
     src/client/vue/hexplorer/analyzers/KatahexAnalyzer.ts        the engine on the Native bridge
     src/client/vue/hexplorer/components/LiveAnalysisButton.vue
@@ -70,6 +70,9 @@ the net and links the source, which is where the AGPL's source offer is reachabl
   (`lineProgress`). There is one engine here rather than a server: a search holds the tree of
   every position it visited until it answers, so a line submitted at once is a line's worth
   of trees resident at once.
+- `updateAnalysis` hands the policy overlay a label per searched candidate, its winrate for
+  the player to move over its visits, when the AI tab's checkbox asks for it; a decimal near 0
+  and 100%, where Hex winrates saturate and it is what tells moves apart.
 - `selectAnalyzer` keeps the evaluations already computed: here every analyzer is one engine
   and one net at a different depth, reading a store that keeps the deepest search of a position.
 
@@ -86,7 +89,14 @@ evaluation graph, and how far filling the graph has got under it.
 
 `src/client/vue/hexplorer/components/HexplorerAiTab.vue`: auto-play can be on for both colours
 at once, so the engine plays itself; PlayHex locks that out because its analyzers are a server
-it would be hammering.
+it would be hammering. A checkbox, kept in local settings, shows winrates and visits on the
+board instead of the policy numbers.
+
+`src/packages/pixi-board/facades/PolicyOverlayFacade.ts`: `setLabels`, text per cell in place
+of the policy percentage, in a smaller font when it runs to two lines.
+
+`src/shared/app/hexplorer.ts`: `AnalysisOutput.moveInfos`, each visited candidate's winrate and
+visits, which `src/analysisStore.ts` keeps with the policy of the search they came from.
 
 `src/client/vue/hexplorer/components/HexplorerMoveTreePanel.vue`: no ctrl+click mention into a
 live session's chat.

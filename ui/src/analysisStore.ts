@@ -36,6 +36,9 @@ type Entry = {
 
     /** Visits behind the policy, which need not be the search the winrate came from. */
     policyVisits?: number;
+
+    /** The candidates of the search the policy came from: move, blue's winrate, visits. */
+    moves?: [string, number, number][];
 };
 
 /**
@@ -74,6 +77,9 @@ class AnalysisStore
             whiteWin: entry.whiteWin,
             policy: entry.policy,
             recommendedMove: mostSearchedMove(entry.policy),
+            moveInfos: entry.moves && Object.fromEntries(
+                entry.moves.map(([move, whiteWin, visits]) => [move, { whiteWin, visits }]),
+            ),
         };
     }
 
@@ -89,7 +95,7 @@ class AnalysisStore
         const key = analysisCacheKey(input);
 
         this.writeEval(key, analysis.whiteWin, analysis.visits);
-        this.writePolicy(key, analysis.policy, analysis.visits);
+        this.writePolicy(key, analysis.policy, analysis.visits, analysis.children);
 
         // A search also evaluates the candidates it gives visits to, and a candidate's winrate
         // is the number the evaluation graph reads for the position it leads to. So a minute
@@ -142,7 +148,7 @@ class AnalysisStore
         this.entries[key] = { ...entry, whiteWin, visits };
     }
 
-    private writePolicy(key: string, policy: number[][] | undefined, visits: number): void
+    private writePolicy(key: string, policy: number[][] | undefined, visits: number, children: EngineAnalysis['children']): void
     {
         const entry = this.entries[key];
 
@@ -152,6 +158,11 @@ class AnalysisStore
 
         entry.policy = policy;
         entry.policyVisits = visits;
+
+        // Rounded: they are for a label on the board, and they are kept in localStorage.
+        entry.moves = children
+            .filter(child => child.visits > 0)
+            .map(child => [child.move, Math.round(child.whiteWin * 1000) / 1000, child.visits]);
     }
 
     private load(): void

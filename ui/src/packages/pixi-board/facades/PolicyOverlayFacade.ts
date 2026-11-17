@@ -31,9 +31,18 @@ class PolicyNumberMark extends BoardEntity
     {
         if (this.textObject) {
             this.textObject.text = text;
+
+            // Patched here: two lines (a label, see setLabels) take a smaller font to fit a cell.
+            this.textObject.style.fontSize = Hex.RADIUS * (text.includes('\n') ? 0.4 : 0.45);
+            this.textObject.style.lineHeight = Hex.RADIUS * (text.includes('\n') ? 0.44 : 0.5);
         }
     }
 }
+
+/**
+ * Text for a cell in place of its policy percentage, null for none.
+ */
+export type CellLabel = (row: number, col: number) => null | string;
 
 class PolicyStarMark extends BoardEntity
 {
@@ -70,6 +79,7 @@ export class PolicyOverlayFacade
     private numberMarks: PolicyNumberMark[][];
     private starMarks: PolicyStarMark[][];
 
+    private labels: null | CellLabel = null;
     private lastPolicy: number[][] | null = null;
     private lastColor: 'black' | 'white' | null = null;
     private lastIsCellShown: CellFilter | undefined = undefined;
@@ -143,6 +153,15 @@ export class PolicyOverlayFacade
     setShowBestMark(showBestMark: boolean): void
     {
         this.showBestMark = showBestMark;
+    }
+
+    /**
+     * Patched here: labels written on the cells instead of the policy numbers, on every cell
+     * they return a label for, or null to go back to the numbers.
+     */
+    setLabels(labels: null | CellLabel): void
+    {
+        this.labels = labels;
     }
 
     /**
@@ -220,7 +239,15 @@ export class PolicyOverlayFacade
                 g.alpha = max > 0 ? val / max : 0;
 
                 const numMark = this.numberMarks[row][col];
-                if (this.showNumbers && val > 0 && val >= max / 2) {
+                const label = this.labels && shown ? this.labels(row, col) : null;
+                if (this.labels) {
+                    if (label !== null) {
+                        numMark.setText(label);
+                        numMark.show();
+                    } else {
+                        numMark.hide();
+                    }
+                } else if (this.showNumbers && val > 0 && val >= max / 2) {
                     numMark.setText(`${Math.round(val * 100)}%`);
                     numMark.show();
                 } else {

@@ -36,6 +36,12 @@ export type AnalysisOutput = {
      * Used by auto-play.
      */
     recommendedMove?: null | HexMove;
+
+    /**
+     * Patched here: what the search found about each candidate it visited, by move ("e5"),
+     * for the board to show instead of the policy. whiteWin is the probability blue wins.
+     */
+    moveInfos?: Record<string, { whiteWin: number, visits: number }>;
 };
 
 /**

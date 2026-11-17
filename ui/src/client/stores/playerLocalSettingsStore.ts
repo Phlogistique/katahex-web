@@ -1,6 +1,6 @@
 /*
  * Written here, at PlayHex's module path: PlayHex's store holds a dozen settings for its whole
- * site, through class-transformer. The hexplorer reads one of them.
+ * site, through class-transformer. The hexplorer reads one of them, and one is this app's own.
  */
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
@@ -10,6 +10,9 @@ const LOCAL_SETTINGS_KEY = 'hex-local-settings';
 export type LocalSettings = {
     /** The help tab is opened first until it is dismissed. */
     hexplorerHelpDismissed?: boolean;
+
+    /** The board shows each candidate's winrate and visits instead of the policy. */
+    hexplorerShowMoveInfos?: boolean;
 };
 
 const load = (): LocalSettings => {
