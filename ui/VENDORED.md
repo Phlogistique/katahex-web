@@ -92,6 +92,16 @@ at once, so the engine plays itself; PlayHex locks that out because its analyzer
 it would be hammering. A checkbox, kept in local settings, shows winrates and visits on the
 board instead of the policy numbers.
 
+Another checkbox shows winrates as odds and the graph and the bar in log-odds
+(`src/winrateScale.ts`, this app's own), Hex winrates being saturated as soon as one side is
+ahead.
+
+`src/client/vue/hexplorer/components/EvaluationGraph.vue`: optional `scale` and `format`
+props, for the log-odds option; linear percentages otherwise, as PlayHex draws them.
+
+`src/client/vue/hexplorer/pages/PageHexplorer.vue` and `HexplorerTreeTab.vue` pass the
+log-odds scale to the bar and the graph when the option is on.
+
 `src/packages/pixi-board/facades/PolicyOverlayFacade.ts`: `setLabels`, text per cell in place
 of the policy percentage, in a smaller font when it runs to two lines.
 

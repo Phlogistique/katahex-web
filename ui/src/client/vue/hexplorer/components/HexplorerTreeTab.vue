@@ -4,13 +4,17 @@
  * AI settings are in AI tab.
  *
  * Patched here: the engine's speed above the graph, and how far filling the graph has got
- * under it, since on one engine that is minutes of work for a long game.
+ * under it, since on one engine that is minutes of work for a long game; and the graph in
+ * log-odds when the AI tab's odds option is on.
  */
 import { inject } from 'vue';
 import { hexplorerKey } from '../composables/useHexplorer.js';
 import { HEXPLORER_COMMENT_MAX_LENGTH } from '../../../../shared/app/hexplorerStudy.js';
 import EvaluationGraph from './EvaluationGraph.vue';
 import { searching, speed } from '../../../../engineSpeed.js';
+import { storeToRefs } from 'pinia';
+import usePlayerLocalSettingsStore from '../../../stores/playerLocalSettingsStore.js';
+import { formatOdds, logitScale } from '../../../../winrateScale.js';
 import HexplorerMoveTreePanel from './HexplorerMoveTreePanel.vue';
 import HexplorerSetupTools from './HexplorerSetupTools.vue';
 import HexplorerPlayerNameInput from './HexplorerPlayerNameInput.vue';
@@ -29,6 +33,13 @@ const {
     userGoToNode,
     currentComment,
 } = inject(hexplorerKey)!;
+
+const { localSettings } = storeToRefs(usePlayerLocalSettingsStore());
+
+/** Red's odds when red is ahead, blue's when blue is: a bar's title, on the odds scale. */
+const formatEval = (whiteWin: number): string => whiteWin >= 0.5
+    ? `blue ${formatOdds(whiteWin)}`
+    : `red ${formatOdds(1 - whiteWin)}`;
 </script>
 
 <template>
@@ -51,6 +62,8 @@ const {
                 <EvaluationGraph
                     :evalHistory
                     :cursorIndex="evalCursorIndex"
+                    :scale="localSettings.hexplorerOddsScale ? logitScale : undefined"
+                    :format="localSettings.hexplorerOddsScale ? formatEval : undefined"
                     class="bg-body"
                     @select="goToEvalIndex"
                 />

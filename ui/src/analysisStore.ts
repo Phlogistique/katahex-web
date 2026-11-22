@@ -159,10 +159,11 @@ class AnalysisStore
         entry.policy = policy;
         entry.policyVisits = visits;
 
-        // Rounded: they are for a label on the board, and they are kept in localStorage.
+        // At full precision: shown as odds, a winrate rounded to 0.1% would turn every
+        // position past 99.95% into a won one.
         entry.moves = children
             .filter(child => child.visits > 0)
-            .map(child => [child.move, Math.round(child.whiteWin * 1000) / 1000, child.visits]);
+            .map(child => [child.move, child.whiteWin, child.visits]);
     }
 
     private load(): void

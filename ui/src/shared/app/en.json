@@ -1714,7 +1714,8 @@
         "filling_graph_waiting": "Evaluated {{done}} of {{total}} moves. Waiting for the position on screen; pause frees the engine.",
         "board_size": "Board size",
         "new_analysis_confirm": "Start a new analysis? The current move tree will be lost.",
-        "show_move_infos": "Win% and visits instead of policy"
+        "show_move_infos": "Win% and visits instead of policy",
+        "odds_scale": "Odds instead of percentages (graph and bar in log-odds)"
     },
     "hexplorer_live": {
         "title": "Hexplorer live",

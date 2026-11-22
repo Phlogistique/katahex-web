@@ -5,7 +5,8 @@
  * Patched here: auto-play can be set on both colours at once, so the engine plays itself.
  * useHexplorer is written for that; PlayHex locks it out because its analyzers are a server
  * it would be hammering, where here the engine is the user's own. And a checkbox puts each
- * candidate's winrate and visits on the board in place of the policy numbers.
+ * candidate's winrate and visits on the board in place of the policy numbers, and another
+ * shows winrates as odds, the graph and the bar in log-odds (see winrateScale.ts).
  */
 import { computed, inject } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -156,6 +157,16 @@ const isCurrentAnalyzerUnavailable = computed(() => analysisError.value === 'eng
                     :disabled="!aiEnabled"
                 >
                 <label class="form-check-label small" for="policy-show-move-infos">{{ $t('hexplorer.show_move_infos') }}</label>
+            </div>
+            <div class="form-check form-check-inline mb-0">
+                <input
+                    id="winrate-odds-scale"
+                    type="checkbox"
+                    class="form-check-input"
+                    v-model="localSettings.hexplorerOddsScale"
+                    :disabled="!aiEnabled"
+                >
+                <label class="form-check-label small" for="winrate-odds-scale">{{ $t('hexplorer.odds_scale') }}</label>
             </div>
         </div>
     </div>

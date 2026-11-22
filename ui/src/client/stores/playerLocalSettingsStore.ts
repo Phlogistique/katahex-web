@@ -13,6 +13,9 @@ export type LocalSettings = {
 
     /** The board shows each candidate's winrate and visits instead of the policy. */
     hexplorerShowMoveInfos?: boolean;
+
+    /** Winrates as odds on the board, and the graph and the bar in log-odds. */
+    hexplorerOddsScale?: boolean;
 };
 
 const load = (): LocalSettings => {

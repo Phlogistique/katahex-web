@@ -28,6 +28,7 @@ import { SearchAborted } from '../../../../engine.js';
 import type { CellLabel } from '../../../../packages/pixi-board/facades/PolicyOverlayFacade.js';
 import type { AnalysisOutput } from '../../../../shared/app/hexplorer.js';
 import usePlayerLocalSettingsStore from '../../../stores/playerLocalSettingsStore.js';
+import { formatOdds } from '../../../../winrateScale.js';
 
 /** 1234 visits as "1.2k": a cell has room for four characters. */
 const formatVisits = (visits: number): string => visits < 1000
@@ -40,8 +41,9 @@ const formatVisits = (visits: number): string => visits < 1000
  */
 const moveInfoLabels = (result: AnalysisOutput, color: 'black' | 'white'): null | CellLabel => {
     const infos = result.moveInfos;
+    const { hexplorerShowMoveInfos, hexplorerOddsScale } = usePlayerLocalSettingsStore().localSettings;
 
-    if (!usePlayerLocalSettingsStore().localSettings.hexplorerShowMoveInfos || !infos) {
+    if (!hexplorerShowMoveInfos || !infos) {
         return null;
     }
 
@@ -53,6 +55,10 @@ const moveInfoLabels = (result: AnalysisOutput, color: 'black' | 'white'): null 
         }
 
         const win = color === 'white' ? info.whiteWin : 1 - info.whiteWin;
+
+        if (hexplorerOddsScale) {
+            return `${formatOdds(win)}\n${formatVisits(info.visits)}`;
+        }
 
         // Hex winrates saturate: whoever is ahead, every candidate reads near 0 or 100, and
         // the decimal there is what tells the moves apart.
@@ -907,7 +913,10 @@ export const useHexplorer = (fromHash: string, analyzers: AnalyzerInterface[], o
     );
 
     // Winrates and visits come from the stored analysis, which updateAnalysis() reads again.
-    watch(() => usePlayerLocalSettingsStore().localSettings.hexplorerShowMoveInfos, () => void updateAnalysis());
+    watch(
+        [() => usePlayerLocalSettingsStore().localSettings.hexplorerShowMoveInfos, () => usePlayerLocalSettingsStore().localSettings.hexplorerOddsScale],
+        () => void updateAnalysis(),
+    );
 
     // Toggling policy display options just re-renders the cached overlay, no new analysis needed.
     watch(

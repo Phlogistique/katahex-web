@@ -6,10 +6,20 @@
  * Clicking a bar goes to the board position at this ply.
  */
 
-defineProps<{
+withDefaults(defineProps<{
     evalHistory: number[];
     cursorIndex: number;
-}>();
+
+    /**
+     * Patched here: where a winrate sits between the edges, 0 to 1, and how it reads in a
+     * bar's title. Linear and a percentage unless told otherwise, see winrateScale.ts.
+     */
+    scale?: (whiteWin: number) => number;
+    format?: (whiteWin: number) => string;
+}>(), {
+    scale: (whiteWin: number) => whiteWin,
+    format: (whiteWin: number) => `${Math.round(whiteWin * 100)}%`,
+});
 
 const emit = defineEmits<{
     select: [index: number];
@@ -24,18 +34,18 @@ const emit = defineEmits<{
             type="button"
             class="eval-bar"
             :class="{ 'eval-bar-current': index === cursorIndex }"
-            :title="`${Math.round(whiteWin * 100)}%`"
+            :title="format(whiteWin)"
             @click="emit('select', index)"
         >
             <span
                 v-if="whiteWin >= 0.5"
                 class="eval-bar-fill bg-primary"
-                :style="{ top: '50%', height: `${(whiteWin - 0.5) * 100}%` }"
+                :style="{ top: '50%', height: `${(scale(whiteWin) - 0.5) * 100}%` }"
             ></span>
             <span
                 v-else
                 class="eval-bar-fill bg-danger"
-                :style="{ bottom: '50%', height: `${(0.5 - whiteWin) * 100}%` }"
+                :style="{ bottom: '50%', height: `${(0.5 - scale(whiteWin)) * 100}%` }"
             ></span>
         </button>
     </div>

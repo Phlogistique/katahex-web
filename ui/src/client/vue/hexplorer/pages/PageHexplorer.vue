@@ -24,6 +24,7 @@ import {
 } from '../../icons.js';
 import HexplorerNavButtons from '../components/HexplorerNavButtons.vue';
 import LiveAnalysisButton from '../components/LiveAnalysisButton.vue';
+import { logitScale } from '../../../../winrateScale.js';
 import AppResizableSidebar from '../../components/AppResizableSidebar.vue';
 import HexplorerFileTab from '../components/HexplorerFileTab.vue';
 import HexplorerHelpTab from '../components/HexplorerHelpTab.vue';
@@ -68,8 +69,15 @@ whenever(gameViewElement, async element => {
     once: true,
 });
 
-const redBarHeightCss = computed(() => `${100 - (whiteWin.value ?? 0.5) * 100}%`);
-const blueBarHeightCss = computed(() => `${(whiteWin.value ?? 0.5) * 100}%`);
+// In log-odds when the AI tab's odds option is on: a winrate bar sits flat against its edge
+// as soon as one side is ahead, see winrateScale.ts.
+const barValue = computed(() => {
+    const value = whiteWin.value ?? 0.5;
+
+    return localSettings.value.hexplorerOddsScale ? logitScale(value) : value;
+});
+const redBarHeightCss = computed(() => `${100 - barValue.value * 100}%`);
+const blueBarHeightCss = computed(() => `${barValue.value * 100}%`);
 const whiteWinAvailable = computed(() => typeof whiteWin.value === 'number');
 
 bindKeys();
