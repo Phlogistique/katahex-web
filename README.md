@@ -898,3 +898,58 @@ Two builds:
   `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS`) when the repository has it, so that
   releases install over each other; with a throwaway debug key otherwise.
 - `VASTAI_API_KEY=... android/build.sh` builds the key in. That apk is as secret as the key.
+
+## A PlayHex AI worker on a rented GPU
+
+`worker/` is an image that runs PlayHex's AI workers ([playhex/hex-ai-distributed]) on a
+vast.ai GPU, and `android/worker/` is a small app that rents one. The workers pull bot moves,
+game analyses and Hexplorer positions from playhex.org over HTTPS, with a PlayHex AI worker
+key; PlayHex admins hand those out, and they show in the PlayHex settings, "AI workers".
+
+[playhex/hex-ai-distributed]: https://github.com/playhex/hex-ai-distributed
+
+### The image
+
+`ghcr.io/phlogistique/playhex-worker`, built by the same workflow as the server image.
+
+- The engine is PlayHex's KataHex fork (`playhex/katahex`, branch `Hex2024`), pinned, built
+  for CUDA. Game analyses need its `kata-raw-nn-batch` command, which upstream does not have.
+- The net is `katahex_model_20220618.bin.gz`, the one PlayHex's own workers run, so that a
+  PlayHex bot plays the same whichever worker answers. It comes from the Google Drive link in
+  hex-ai-distributed's README; the image pins its sha256.
+- The worker is hex-ai-distributed at a pinned commit. It takes every katahex job type,
+  tree search included (`AI_JOB_TYPES`), and runs KataHex with 8 search threads: PlayHex's
+  tree searches are 400 playouts, too few for 32 threads.
+- `WORKERS` (2) worker processes, each with its own KataHex. A worker does one job at a time.
+
+`worker/supervisor.mjs` starts the workers and answers the app over plain HTTP:
+
+    GET  /health              "ok", without a token
+    GET  /ping?token=...      a sign of life; answers {left, workers, done, log}
+    POST /bye?token=...       destroy this machine now
+
+`log` holds the workers' last 40 lines at info level and above.
+
+### The dead man's switch
+
+The same as the server's, 30 minutes long: with no ping for `IDLE_TIMEOUT` (1800 s), none at
+all for `FIRST_CONNECT_TIMEOUT` (1800 s) after boot, or `MAX_LIFETIME` (12 h) after boot, the
+supervisor sends each worker two SIGTERMs, so that it gives its current job back to PlayHex
+and disconnects, then destroys the instance with `CONTAINER_API_KEY`. Tested on a CPU build
+against a stand-in for the PlayHex API: the running tree search came back to PlayHex as a
+retryable failure, both workers disconnected, then the supervisor called `DELETE`.
+
+### The app
+
+The app asks for a vast.ai key and a PlayHex worker key, and keeps them on the phone. "Start a
+worker" rents the cheapest machine under `WORKER_MAX_DPH` ($0.20/h) with the same search as
+the KataHex app, passes the PlayHex key in the container's environment, and waits for
+`/health`; if a machine fails to start, it is destroyed and the next one rented. While the
+app is on screen it pings every 30 s and shows the workers' log, the jobs done and the time
+left. Once the app is left, the machine runs 30 more minutes and destroys itself. "Stop and
+destroy" ends it at once.
+
+The host of a vast.ai machine can read its environment, PlayHex key included.
+
+`android/build.sh` builds both apps; the release workflow attaches `playhex-worker-*.apk`
+next to `katahex-gpu-*.apk`. `Vast.java`, under `android/vast/`, is shared by both.

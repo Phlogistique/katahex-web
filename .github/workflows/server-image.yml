@@ -1,9 +1,10 @@
-# Builds the GPU server image (server/) and pushes it to ghcr.io, for vast.ai to pull.
+# Builds the GPU images, the engine server (server/) and the PlayHex worker (worker/), and
+# pushes them to ghcr.io, for vast.ai to pull.
 name: server-image
 
 on:
   push:
-    paths: ['server/**', '.github/workflows/server-image.yml']
+    paths: ['server/**', 'worker/**', '.github/workflows/server-image.yml']
   workflow_dispatch:
 
 permissions:
@@ -13,6 +14,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { dir: server, image: katahex-server, description: KataHex analysis engine on CUDA behind a websocket }
+          - { dir: worker, image: playhex-worker, description: PlayHex AI workers with KataHex on CUDA }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -22,16 +28,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: name
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/katahex-server" >> "$GITHUB_OUTPUT"
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
-          context: server
+          context: ${{ matrix.dir }}
           push: true
           tags: |
             ${{ steps.name.outputs.image }}:latest
             ${{ steps.name.outputs.image }}:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=KataHex analysis engine on CUDA behind a websocket
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            org.opencontainers.image.description=${{ matrix.description }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

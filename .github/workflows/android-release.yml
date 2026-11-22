@@ -1,4 +1,4 @@
-# On a GitHub release, builds the Android app and attaches it to the release.
+# On a GitHub release, builds the Android apps and attaches them to the release.
 #
 # The apk carries no vast.ai key: it asks for one on first start. Signing uses the
 # ANDROID_KEYSTORE secret (a base64 .jks) with ANDROID_KEYSTORE_PASSWORD and
@@ -54,8 +54,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk "katahex-gpu-${{ github.event.release.tag_name }}.apk"
-          gh release upload "${{ github.event.release.tag_name }}" katahex-gpu-*.apk --clobber
+          cp android/worker/build/outputs/apk/release/worker-release.apk "playhex-worker-${{ github.event.release.tag_name }}.apk"
+          gh release upload "${{ github.event.release.tag_name }}" katahex-gpu-*.apk playhex-worker-*.apk --clobber
       - uses: actions/upload-artifact@v4
         with:
           name: katahex-gpu-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/worker/build/outputs/apk/release/worker-release.apk

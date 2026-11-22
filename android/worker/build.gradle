@@ -1,0 +1,58 @@
+plugins {
+    id 'com.android.application'
+}
+
+def env = { String name, String fallback -> System.getenv(name) ?: fallback }
+def quoted = { String s -> '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"' }
+
+android {
+    // The package Vast.java is in; a separate app all the same.
+    namespace 'net.katahex.remote'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'net.katahex.worker'
+        minSdk 26
+        targetSdk 35
+        versionCode Integer.parseInt(env('VERSION_CODE', '1'))
+        versionName env('VERSION_NAME', 'dev')
+
+        buildConfigField 'String', 'IMAGE', quoted(env('WORKER_IMAGE', 'ghcr.io/phlogistique/playhex-worker:latest'))
+        buildConfigField 'String', 'HEX_URL', quoted(env('WORKER_HEX_URL', 'https://playhex.org'))
+        buildConfigField 'double', 'MAX_DOLLARS_PER_HOUR', env('WORKER_MAX_DPH', '0.2')
+        // Seconds the machine waits for a sign of life before destroying itself.
+        buildConfigField 'int', 'IDLE_TIMEOUT', env('WORKER_IDLE_TIMEOUT', '1800')
+        buildConfigField 'int', 'MAX_LIFETIME', env('WORKER_MAX_LIFETIME', '43200')
+    }
+
+    buildFeatures { buildConfig true }
+    sourceSets.main.java.srcDir '../vast'
+
+    // Signed as app/ is, see there.
+    signingConfigs {
+        release {
+            if (System.getenv('KEYSTORE_FILE')) {
+                storeFile file(System.getenv('KEYSTORE_FILE'))
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD') ?: System.getenv('KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig System.getenv('KEYSTORE_FILE') ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
