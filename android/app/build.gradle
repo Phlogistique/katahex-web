@@ -29,6 +29,7 @@ android {
     }
 
     buildFeatures { buildConfig true }
+    sourceSets.main.java.srcDir '../vast'
 
     // A release signed with the same key every time installs over the last one. CI signs with
     // the ANDROID_KEYSTORE secret when the repository has one, and with a throwaway debug key

@@ -14,9 +14,8 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
-/** The few calls of the vast.ai REST API this app makes. Blocking: call off the main thread. */
+/** The few calls of the vast.ai REST API the apps make. Blocking: call off the main thread. */
 final class Vast {
-    static final String LABEL = "katahex-app";
     static final int PORT = 8765;
 
     private static final String API = "https://console.vast.ai/api/v0";
@@ -60,19 +59,15 @@ final class Vast {
         }
     }
 
-    /** Rents an offer to run the server image. Returns the new instance's id. */
-    long create(long offerId, String image, String token, int idleTimeout, int maxLifetime) throws IOException {
+    /** Rents an offer to run an image, with `-e NAME=value` pairs. Returns the new instance's id. */
+    long create(long offerId, String image, String label, String env) throws IOException {
         try {
-            String env = "-e KATAHEX_TOKEN=" + token
-                + " -e IDLE_TIMEOUT=" + idleTimeout
-                + " -e MAX_LIFETIME=" + maxLifetime
-                + " -p " + PORT + ":" + PORT;
             JSONObject body = new JSONObject()
                 .put("client_id", "me")
                 .put("image", image)
-                .put("env", env)
+                .put("env", env + " -p " + PORT + ":" + PORT)
                 .put("disk", 20)
-                .put("label", LABEL)
+                .put("label", label)
                 .put("runtype", "args")
                 .put("args", new JSONArray())
                 .put("cancel_unavail", true);

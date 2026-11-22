@@ -40,6 +40,7 @@ final class RemoteEngine {
         void onEngineLog(String line);
     }
 
+    private static final String LABEL = "katahex-app";
     private static final String PREF_INSTANCE = "instance";
     private static final String PREF_TOKEN = "token";
     private static final String PREF_INFO = "info";
@@ -209,7 +210,7 @@ final class RemoteEngine {
         JSONArray all = vast.instances();
         for (int i = 0; i < all.length(); i++) {
             JSONObject instance = all.optJSONObject(i);
-            if (instance != null && Vast.LABEL.equals(instance.optString("label"))) {
+            if (instance != null && LABEL.equals(instance.optString("label"))) {
                 progress("destroying a server left behind: " + instance.optLong("id"));
                 vast.destroy(instance.optLong("id"));
             }
@@ -236,8 +237,8 @@ final class RemoteEngine {
             double price = offer.optDouble("dph_total", 0);
             try {
                 progress(String.format(Locale.US, "renting a %s at $%.3f/h", gpu, price));
-                long id = vast.create(offer.getLong("id"), BuildConfig.IMAGE, token,
-                    BuildConfig.IDLE_TIMEOUT, BuildConfig.MAX_LIFETIME);
+                long id = vast.create(offer.getLong("id"), BuildConfig.IMAGE, LABEL, "-e KATAHEX_TOKEN=" + token
+                    + " -e IDLE_TIMEOUT=" + BuildConfig.IDLE_TIMEOUT + " -e MAX_LIFETIME=" + BuildConfig.MAX_LIFETIME);
                 setInfo(String.format(Locale.US, "%s · $%.3f/h · #%d", gpu, price, id));
                 prefs.edit().putLong(PREF_INSTANCE, id).putString(PREF_TOKEN, token)
                     .putString(PREF_INFO, info).apply();
