@@ -1,4 +1,5 @@
-# On a GitHub release, builds the Android apps and attaches them to the release.
+# On a GitHub release, or a pushed v* tag, builds the Android apps and attaches them to the
+# release, creating it for a tag that has none.
 #
 # The apk carries no vast.ai key: it asks for one on first start. Signing uses the
 # ANDROID_KEYSTORE secret (a base64 .jks) with ANDROID_KEYSTORE_PASSWORD and
@@ -9,6 +10,8 @@ name: android-release
 on:
   release:
     types: [published]
+  push:
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -17,6 +20,8 @@ permissions:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,17 +50,18 @@ jobs:
         env:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          VERSION_NAME: ${{ github.event.release.tag_name || 'dev' }}
+          VERSION_NAME: ${{ env.TAG || 'dev' }}
           VERSION_CODE: ${{ github.run_number }}
         run: android/build.sh
       - name: Attach to the release
-        if: github.event_name == 'release'
+        if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk "katahex-gpu-${{ github.event.release.tag_name }}.apk"
-          cp android/worker/build/outputs/apk/release/worker-release.apk "playhex-worker-${{ github.event.release.tag_name }}.apk"
-          gh release upload "${{ github.event.release.tag_name }}" katahex-gpu-*.apk playhex-worker-*.apk --clobber
+          gh release view "$TAG" > /dev/null || gh release create "$TAG" --title "$TAG" --generate-notes
+          cp android/app/build/outputs/apk/release/app-release.apk "katahex-gpu-$TAG.apk"
+          cp android/worker/build/outputs/apk/release/worker-release.apk "playhex-worker-$TAG.apk"
+          gh release upload "$TAG" katahex-gpu-*.apk playhex-worker-*.apk --clobber
       - uses: actions/upload-artifact@v4
         with:
           name: katahex-gpu-apk

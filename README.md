@@ -894,7 +894,7 @@ Two builds:
 
 - `android/build.sh` asks for a vast.ai key on first start and keeps it in the app's
   preferences. This is what `.github/workflows/android-release.yml` builds and attaches to
-  every GitHub release. Signed with the `ANDROID_KEYSTORE` secret (a base64 `.jks`, with
+  every GitHub release; pushing a `v*` tag creates the release. Signed with the `ANDROID_KEYSTORE` secret (a base64 `.jks`, with
   `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS`) when the repository has it, so that
   releases install over each other; with a throwaway debug key otherwise.
 - `VASTAI_API_KEY=... android/build.sh` builds the key in. That apk is as secret as the key.
