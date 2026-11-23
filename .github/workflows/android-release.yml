@@ -1,5 +1,5 @@
-# On a GitHub release, or a pushed v* tag, builds the Android apps and attaches them to the
-# release, creating it for a tag that has none.
+# On a GitHub release, a pushed v* tag, or a manual run given a tag, builds the Android apps
+# and attaches them to that release, creating it if there is none.
 #
 # The apk carries no vast.ai key: it asks for one on first start. Signing uses the
 # ANDROID_KEYSTORE secret (a base64 .jks) with ANDROID_KEYSTORE_PASSWORD and
@@ -13,6 +13,10 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release to create or update, e.g. v1. Empty builds without releasing.
+        required: false
 
 permissions:
   contents: write
@@ -21,7 +25,7 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || '' }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,7 +62,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$TAG" > /dev/null || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release view "$TAG" > /dev/null || gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
           cp android/app/build/outputs/apk/release/app-release.apk "katahex-gpu-$TAG.apk"
           cp android/worker/build/outputs/apk/release/worker-release.apk "playhex-worker-$TAG.apk"
           gh release upload "$TAG" katahex-gpu-*.apk playhex-worker-*.apk --clobber
