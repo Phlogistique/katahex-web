@@ -429,8 +429,9 @@ network policy is between 5% and 30% of its best move's, until the rating search
 player's side at least 90%, or for 20 moves at most, after which the player takes over
 wherever it got; if the game ends first, it stops there and says to change the settings. Then that side is the player's, on a Fischer clock of 20 seconds
 plus 5 a move that increments never take past 25, and KataHex answers with its own search.
-Each of the player's moves is rated before KataHex answers; the score is how many moves the
-player makes before their side is rated under 10%.
+After each of the player's moves KataHex answers, and the position after its answer is rated,
+so a game that is lost ends on the move that won it for KataHex; the score is how many moves
+the player makes before their side is rated under 10%.
 
 The swap can be turned off. Without it red is winning from the start, KataHex rating the
 empty board 99.8% for red on 11x11 and 99.6% on 14x14. From a fair opening, at one visit on

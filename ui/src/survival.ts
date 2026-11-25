@@ -26,8 +26,8 @@ export type SurvivalSettings = {
     opponentVisits: number;
 
     /**
-     * Visits of the search that rates the player's side after each of their moves, and that picks
-     * that side's moves while KataHex plays itself.
+     * Visits of the search that rates the player's side after each of KataHex's answers, and
+     * that picks that side's moves while KataHex plays itself.
      */
     evalVisits: number;
 
@@ -56,7 +56,7 @@ export type SurvivalSettings = {
      */
     maxSelfPlayMoves: number;
 
-    /** The game ends as soon as the player's side is rated under this after one of their moves. */
+    /** The game ends as soon as KataHex answers a move and the player's side is rated under this. */
     loseWinrate: number;
 
     /** Fischer clock, in seconds: the player starts with `initial`, gains `increment` a move, never past `cap` (0: no cap). */

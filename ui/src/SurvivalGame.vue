@@ -468,23 +468,12 @@ const onClick = async (move: string): Promise<void> => {
     }
 
     phase.value = 'thinking';
-    status.value = 'KataHex rates your move…';
+    status.value = 'KataHex answers…';
 
     try {
-        const rated = await ask(gen, settings.evalVisits);
-
-        whiteWin.value = rated.whiteWin ?? 0.5;
-        evalHistory.value = [...evalHistory.value, whiteWin.value];
-
-        if (yourWin.value! < settings.loseWinrate) {
-            finish(`That move took you under ${oddsScale.value ? formatOdds(settings.loseWinrate) : percent(settings.loseWinrate)}.`);
-            return;
-        }
-
-        survived.value++;
-        status.value = 'KataHex answers…';
-
-        const reply = settings.opponentVisits === settings.evalVisits ? rated : await ask(gen, settings.opponentVisits);
+        // KataHex answers first, and what is rated is the position after its answer, the one
+        // the player would move in: losing, they see the move that did it.
+        const reply = await ask(gen, settings.opponentVisits);
 
         play(searchedMove(reply));
 
@@ -493,6 +482,19 @@ const onClick = async (move: string): Promise<void> => {
             return;
         }
 
+        status.value = 'KataHex rates the position…';
+
+        const rated = await ask(gen, settings.evalVisits);
+
+        whiteWin.value = rated.whiteWin ?? 0.5;
+        evalHistory.value = [...evalHistory.value, whiteWin.value];
+
+        if (yourWin.value! < settings.loseWinrate) {
+            finish(`After KataHex's answer you are under ${oddsScale.value ? formatOdds(settings.loseWinrate) : percent(settings.loseWinrate)}.`);
+            return;
+        }
+
+        survived.value++;
         yourTurn();
     } catch (e) {
         fail(gen, e);
