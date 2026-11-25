@@ -640,10 +640,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                                 <label>under, %<span v-if="oddsScale" class="text-body-secondary"> ({{ formOdds(form.loseWinrate) }})</span> <input v-model.number="form.loseWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
                                 <div class="form-check">
                                     <input id="survival-odds" v-model="localSettings.hexplorerOddsScale" type="checkbox" class="form-check-input">
-                                    <label for="survival-odds" class="form-check-label">
-                                        Show winrates as odds, and the bar and the graph in log-odds,
-                                        where 99.9% and 99.99% stay apart (the analysis board's option too)
-                                    </label>
+                                    <label for="survival-odds" class="form-check-label">Show winrates as odds (999:1)</label>
                                 </div>
                             </fieldset>
                             <fieldset>
