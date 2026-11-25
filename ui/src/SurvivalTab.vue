@@ -24,11 +24,12 @@ const best = computed(() => localSettings.value.survivalBest?.[settingsKey(sanit
         <h2>Survive KataHex</h2>
         <p>
             KataHex plays itself from an even opening, a first move from PlayHex's swap maps that
-            blue may swap, red well and blue badly, until red is winning comfortably.
-            Then you take red, on a short clock, and KataHex plays blue for real.
+            blue may swap, your side well and the other badly, until your side is winning
+            comfortably. Then you take it, red or blue, on a short clock, and KataHex plays the
+            other for real.
         </p>
         <p>
-            Your score is how many moves you make before KataHex rates red under the line.
+            Your score is how many moves you make before KataHex rates you under the line.
             The opponent's strength, the search that rates you, how badly blue plays itself into
             a loss and the clock can all be set before a game.
         </p>

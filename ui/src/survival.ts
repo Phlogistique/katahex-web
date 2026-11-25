@@ -1,33 +1,38 @@
 /*
  * Survival: how long can you hold a won game against KataHex?
  *
- * KataHex plays itself from a fair opening and blue's swap decision, both from PlayHex's swap
- * maps, red well and blue badly, for at least `minSelfPlayMoves` moves and until it rates red's
- * position at least `startWinrate`. Then the player takes red and KataHex plays blue properly, and the score is how
- * many moves the player makes before KataHex rates red under `loseWinrate`. No swap: red always
- * moves first.
+ * KataHex plays itself from a fair opening and the second player's swap decision, both from
+ * PlayHex's swap maps, the player's side well and the other badly, for at least
+ * `minSelfPlayMoves` moves and until it rates the player's side at least `startWinrate`. Then
+ * the player takes that side, KataHex plays the other properly, and the score is how many moves
+ * the player makes before KataHex rates their side under `loseWinrate`.
  *
  * This file is the rules, the opponent's bad moves and the clock, with no engine and no ui, so
- * that they can be read and checked on their own. PageSurvival.vue plays the game with them.
+ * that they can be read and checked on their own. SurvivalGame.vue plays the game with them.
  *
  * Written for this app; not part of PlayHex.
  */
 import { coordsToMove, mirrorMove, parseMove, validateMove } from '@playhex/move-notation';
 
+/** Which side the player takes over: with the swap either is fair, so by default it is drawn. */
+export type SurvivalColor = 'random' | 'red' | 'blue';
+
 export type SurvivalSettings = {
     boardSize: number;
 
-    /** Visits of the search blue answers the player with. */
+    color: SurvivalColor;
+
+    /** Visits of the search KataHex answers the player with. */
     opponentVisits: number;
 
     /**
-     * Visits of the search that rates red after each of the player's moves, and that picks red's
-     * moves while KataHex plays itself.
+     * Visits of the search that rates the player's side after each of their moves, and that picks
+     * that side's moves while KataHex plays itself.
      */
     evalVisits: number;
 
     /**
-     * How badly blue plays while KataHex plays itself: a move picked at random among those whose
+     * How badly the player's opponent plays while KataHex plays itself: a move picked at random among those whose
      * network policy is between these two fractions of its best move's, so neither a blunder
      * nor a good move.
      */
@@ -36,16 +41,20 @@ export type SurvivalSettings = {
 
     /**
      * Self-play opens with a fair first move, which blue may swap, as a game with the swap rule
-     * does. Without it red is winning on the empty board already, KataHex rating it 99.8% on
-     * 11x11 and 99.6% on 14x14, and a game starts only once `minSelfPlayMoves` are played.
+     * does, and either side is fair to take. Without it red is winning on the empty board
+     * already, KataHex rating it 99.8% on 11x11 and 99.6% on 14x14, and a game starts somewhere
+     * else only once `minSelfPlayMoves` are played.
      */
     swap: boolean;
 
-    /** Self-play hands red over once it has played at least this many moves and red is rated at least `startWinrate`. */
+    /**
+     * Self-play hands the player their side once it has played at least this many moves and
+     * their side is rated at least `startWinrate`.
+     */
     minSelfPlayMoves: number;
     startWinrate: number;
 
-    /** The game ends as soon as red is rated under this after one of the player's moves. */
+    /** The game ends as soon as the player's side is rated under this after one of their moves. */
     loseWinrate: number;
 
     /** Fischer clock, in seconds: the player starts with `initial`, gains `increment` a move, never past `cap` (0: no cap). */
@@ -54,9 +63,10 @@ export type SurvivalSettings = {
     cap: number;
 };
 
-/** 14x14 by default: on 11x11 red's winrates saturate too fast for there to be a game. */
+/** 14x14 by default: on 11x11 winrates saturate too fast for there to be a game. */
 export const DEFAULT_SURVIVAL_SETTINGS: SurvivalSettings = {
     boardSize: 14,
+    color: 'random',
     opponentVisits: 100,
     evalVisits: 200,
     weakMin: 0.05,
@@ -84,6 +94,7 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
 
     return {
         boardSize: Math.round(number(merged.boardSize, d.boardSize, 3, 19)),
+        color: (['random', 'red', 'blue'] as const).find(color => color === merged.color) ?? d.color,
         opponentVisits: Math.round(number(merged.opponentVisits, d.opponentVisits, 1, 100000)),
         evalVisits: Math.round(number(merged.evalVisits, d.evalVisits, 1, 100000)),
         weakMin,
@@ -100,7 +111,7 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
 
 /** What a best score is filed under: a score only compares with games played the same way. */
 export const settingsKey = (s: SurvivalSettings): string => [
-    s.boardSize, s.opponentVisits, s.evalVisits, s.weakMin, s.weakMax,
+    s.boardSize, s.color, s.opponentVisits, s.evalVisits, s.weakMin, s.weakMax,
     s.swap ? 'swap' : 'noswap', s.minSelfPlayMoves, s.startWinrate, s.loseWinrate, s.initial, s.increment, s.cap,
 ].join('/');
 

@@ -140,7 +140,7 @@ const closeSurvival = async (): Promise<void> => {
  * Opens the game just played on the board, the player's part of it named, after asking, as a
  * load from the file tab does, before throwing a tree away.
  */
-const analyseSurvivalGame = async (game: { size: number, moves: HexMove[], handover: number }): Promise<void> => {
+const analyseSurvivalGame = async (game: { size: number, moves: HexMove[], handover: number, you: 0 | 1 }): Promise<void> => {
     if (state.value.nodes.length > 1 && !confirm(t('hexplorer.new_analysis_confirm'))) {
         return;
     }
@@ -150,8 +150,8 @@ const analyseSurvivalGame = async (game: { size: number, moves: HexMove[], hando
     await importGame({
         boardsize: game.size,
         moves: game.moves,
-        playerBlackName: `You, from move ${game.handover + 1}`,
-        playerWhiteName: 'KataHex',
+        playerBlackName: game.you === 0 ? `You, from move ${game.handover + 1}` : 'KataHex',
+        playerWhiteName: game.you === 1 ? `You, from move ${game.handover + 1}` : 'KataHex',
     });
     survivalOpen.value = false;
     currentTab.value = 'tree';

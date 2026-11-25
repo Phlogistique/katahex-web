@@ -31,13 +31,14 @@ import {
     settingsKey,
     SurvivalBoard,
     SWAP,
+    type Stone,
     type SurvivalSettings,
 } from './survival.js';
 import { pickFairFirstMove, shouldSwap } from './shared/swap-maps/swapDecision.js';
 
 const emit = defineEmits<{
     close: [];
-    analyse: [game: { size: number, moves: HexMove[], handover: number }];
+    analyse: [game: { size: number, moves: HexMove[], handover: number, you: Stone }];
 }>();
 
 const { localSettings } = storeToRefs(usePlayerLocalSettingsStore());
@@ -46,17 +47,25 @@ type Phase = 'setup' | 'selfplay' | 'player' | 'thinking' | 'over';
 
 const phase = ref<Phase>('setup');
 
+/**
+ * A fraction as the percentage the form shows, to a millionth of a percent: on 11x11 the
+ * thresholds worth playing at are 99.99% and 0.01%, which rounding to a tenth would turn into
+ * 100% and 0%, a game that never starts and one that is never lost.
+ */
+const toPercent = (fraction: number): number => Math.round(fraction * 1e8) / 1e6;
+
 /** The settings form, in the units it shows: percentages and seconds. */
 const toForm = (s: SurvivalSettings) => ({
     boardSize: s.boardSize,
+    color: s.color,
     opponentVisits: s.opponentVisits,
     evalVisits: s.evalVisits,
-    weakMin: Math.round(s.weakMin * 1000) / 10,
-    weakMax: Math.round(s.weakMax * 1000) / 10,
+    weakMin: toPercent(s.weakMin),
+    weakMax: toPercent(s.weakMax),
     swap: s.swap,
     minSelfPlayMoves: s.minSelfPlayMoves,
-    startWinrate: Math.round(s.startWinrate * 1000) / 10,
-    loseWinrate: Math.round(s.loseWinrate * 1000) / 10,
+    startWinrate: toPercent(s.startWinrate),
+    loseWinrate: toPercent(s.loseWinrate),
     initial: s.initial,
     increment: s.increment,
     cap: s.cap,
@@ -90,8 +99,15 @@ const resetForm = (): void => {
 /** Blue's winrate after each evaluation, for the graph. */
 const evalHistory = ref<number[]>([]);
 
-/** Red's winrate by the last evaluation. */
-const redWin = ref<number | null>(null);
+/** The side the player takes over: red is 0, blue 1. */
+const you = ref<Stone>(0);
+const colorName = (side: Stone): string => side === 0 ? 'red' : 'blue';
+
+/** Blue's winrate by the last evaluation. */
+const whiteWin = ref<number | null>(null);
+
+/** The player's side's winrate by the last evaluation. */
+const yourWin = computed(() => whiteWin.value === null ? null : you.value === 1 ? whiteWin.value : 1 - whiteWin.value);
 
 /** Moves the player has made and stayed above the threshold after. */
 const survived = ref(0);
@@ -112,15 +128,33 @@ const best = computed(() => localSettings.value.survivalBest?.[settingsKey(fromF
 
 const oddsScale = computed(() => !!localSettings.value.hexplorerOddsScale);
 const barValue = computed(() => {
-    const whiteWin = redWin.value === null ? 0.5 : 1 - redWin.value;
+    const blue = whiteWin.value ?? 0.5;
 
-    return oddsScale.value ? logitScale(whiteWin) : whiteWin;
+    return oddsScale.value ? logitScale(blue) : blue;
 });
 const redBarHeightCss = computed(() => `${100 - barValue.value * 100}%`);
 const blueBarHeightCss = computed(() => `${barValue.value * 100}%`);
 
-const percent = (p: number): string => `${(p * 100).toFixed(p > 0.99 || p < 0.01 ? 1 : 0)}%`;
-const formatRed = (p: number | null): string => p === null ? '–' : (oddsScale.value ? formatOdds(1 - p) : percent(p));
+/**
+ * A winrate as a percentage, with as many decimals as it takes to show two digits of its
+ * distance to the nearer edge: 0.012%, 99.97%, 55%.
+ */
+const percent = (p: number): string => {
+    // Rounded first: 1 - 0.9999 is 0.00009999999999998899, a digit short in log10.
+    const edge = Number((Math.min(p, 1 - p) * 100).toPrecision(12));
+    const decimals = edge >= 10 || edge <= 0 ? 0 : Math.min(8, Math.max(0, 1 - Math.floor(Math.log10(edge))));
+
+    return `${(p * 100).toFixed(decimals).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')}%`;
+};
+
+/** A threshold from the form, which is in percent, as the odds the board would show. */
+const formOdds = (percentValue: number): string => {
+    const p = percentValue / 100;
+
+    return Number.isFinite(p) && p > 0 && p < 1 ? formatOdds(p) : '';
+};
+/** A winrate, or odds: 999:1 when the side is all but won. */
+const formatWin = (p: number | null): string => p === null ? '–' : (oddsScale.value ? formatOdds(p) : percent(p));
 
 const boardElement = useTemplateRef<HTMLElement>('board-element');
 
@@ -137,6 +171,9 @@ let ticker: ReturnType<typeof setInterval> | null = null;
 let generation = 0;
 
 class Abandoned extends Error {}
+
+/** Self-play that cannot get the player's side to the threshold: a setting to change, not a failure. */
+class SelfPlayStuck extends Error {}
 
 const alive = (gen: number): void => {
     if (gen !== generation) {
@@ -236,7 +273,8 @@ const start = async (): Promise<void> => {
     stopTicker();
     clock = null;
     evalHistory.value = [];
-    redWin.value = null;
+    whiteWin.value = null;
+    you.value = settings.color === 'red' ? 0 : settings.color === 'blue' ? 1 : (Math.random() < 0.5 ? 0 : 1);
     survived.value = 0;
     handover.value = 0;
     handedOver.value = false;
@@ -261,6 +299,12 @@ const fail = (gen: number, e: unknown): void => {
     stopTicker();
     clock?.stop();
     error.value = e instanceof Error ? e.message : String(e);
+
+    if (e instanceof SelfPlayStuck) {
+        phase.value = 'setup';
+        return;
+    }
+
     phase.value = 'over';
     endReason.value = 'The engine failed.';
 };
@@ -287,15 +331,32 @@ const openWithSwap = (): boolean => {
 };
 
 /**
- * Red at its best against a blue playing middling moves, until red is clearly winning. Red's
- * search is the evaluation's: one search both rates the position and picks red's move.
+ * Self-play that never reaches the threshold: the side it favours connects, or the board fills,
+ * before it is rated that high. The net alone, on 11x11, tops out around 4000:1 and then grows
+ * less sure as the board fills, so 99.99% at one visit is such a threshold.
+ */
+const MAX_SELF_PLAY_RESTARTS = 3;
+
+/**
+ * The player's side at its best against the other playing middling moves, until the player's
+ * side is clearly winning. Its search is the evaluation's: one search both rates the position
+ * and picks its move.
  */
 const selfPlay = async (gen: number): Promise<void> => {
     phase.value = 'selfplay';
 
+    const good = you.value;
+    let restarts = 0;
+    let peak = 0;
+
     for (;;) {
         if (board.winner() !== null || board.full()) {
-            // Red should have been rated winning long before it won: start over.
+            // The side KataHex favours should have been rated winning long before it won.
+            if (++restarts > MAX_SELF_PLAY_RESTARTS) {
+                throw new SelfPlayStuck(`Self-play never rated ${colorName(good)} at ${percent(settings.startWinrate)}, `
+                    + `${restarts} games running, at most ${percent(peak)}: lower the threshold or raise the rating visits.`);
+            }
+
             await newBoard();
             evalHistory.value = [];
         }
@@ -304,28 +365,28 @@ const selfPlay = async (gen: number): Promise<void> => {
             continue;
         }
 
-        status.value = `KataHex plays itself, move ${board.moves.length + 1}…`;
+        status.value = `KataHex plays itself, move ${board.moves.length + 1}`
+            + `${restarts ? `, game ${restarts + 1}` : ''}…`;
 
-        // Blue's turn: after red's opening when blue kept it, and after each of red's moves.
-        if (board.toMove === 1) {
+        if (board.toMove !== good) {
             const policy = await ask(gen, 1);
-            const blue = pickMediocreMove(policy.prior, isEmpty, settings.weakMin, settings.weakMax);
+            const move = pickMediocreMove(policy.prior, isEmpty, settings.weakMin, settings.weakMax);
 
-            if (blue === null) {
+            if (move === null) {
                 continue;
             }
 
-            play(blue);
+            play(move);
             continue;
         }
 
         const rated = await ask(gen, settings.evalVisits);
-        const whiteWin = rated.whiteWin ?? 0.5;
 
-        redWin.value = 1 - whiteWin;
-        evalHistory.value = [...evalHistory.value, whiteWin];
+        whiteWin.value = rated.whiteWin ?? 0.5;
+        evalHistory.value = [...evalHistory.value, whiteWin.value];
+        peak = Math.max(peak, yourWin.value!);
 
-        if (board.moves.length >= settings.minSelfPlayMoves && redWin.value >= settings.startWinrate) {
+        if (board.moves.length >= settings.minSelfPlayMoves && yourWin.value! >= settings.startWinrate) {
             handOver();
             return;
         }
@@ -344,7 +405,7 @@ const handOver = (): void => {
 
 const yourTurn = (): void => {
     phase.value = 'player';
-    status.value = 'Your move, as red.';
+    status.value = `Your move, as ${colorName(you.value)}.`;
     clock!.start();
     stopTicker();
     ticker = setInterval(() => {
@@ -374,7 +435,7 @@ const onClick = async (move: string): Promise<void> => {
     clockMs.value = clock.left();
     play(move);
 
-    if (board.winner() === 0) {
+    if (board.winner() === you.value) {
         survived.value++;
         finish('You connected. KataHex never got you under the line.');
         return;
@@ -385,13 +446,12 @@ const onClick = async (move: string): Promise<void> => {
 
     try {
         const rated = await ask(gen, settings.evalVisits);
-        const whiteWin = rated.whiteWin ?? 0.5;
 
-        redWin.value = 1 - whiteWin;
-        evalHistory.value = [...evalHistory.value, whiteWin];
+        whiteWin.value = rated.whiteWin ?? 0.5;
+        evalHistory.value = [...evalHistory.value, whiteWin.value];
 
-        if (redWin.value < settings.loseWinrate) {
-            finish(`That move took red under ${percent(settings.loseWinrate)}.`);
+        if (yourWin.value! < settings.loseWinrate) {
+            finish(`That move took you under ${oddsScale.value ? formatOdds(settings.loseWinrate) : percent(settings.loseWinrate)}.`);
             return;
         }
 
@@ -402,8 +462,8 @@ const onClick = async (move: string): Promise<void> => {
 
         play(searchedMove(reply));
 
-        if (board.winner() === 1) {
-            finish('Blue connected.');
+        if (board.winner() !== null) {
+            finish(`${colorName(board.winner()!)[0].toUpperCase()}${colorName(board.winner()!).slice(1)} connected.`);
             return;
         }
 
@@ -455,7 +515,7 @@ const backToSettings = (): void => {
 
 const analyse = (): void => {
     abandon();
-    emit('analyse', { size: board.size, moves: [...board.moves] as HexMove[], handover: handover.value });
+    emit('analyse', { size: board.size, moves: [...board.moves] as HexMove[], handover: handover.value, you: you.value });
 };
 
 const close = (): void => {
@@ -483,6 +543,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
         <div class="top-bar border-bottom">
             <strong class="me-auto">Survive KataHex</strong>
             <span v-if="phase !== 'setup'" class="small text-body-secondary">
+                you play <strong :class="you === 0 ? 'text-danger' : 'text-primary'" class="you-color">{{ colorName(you) }}</strong> ·
                 survived <strong class="text-body survived">{{ survived }}</strong>
                 <template v-if="bestBefore !== null"> · best {{ bestBefore }}</template>
             </span>
@@ -495,7 +556,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
         </div>
 
         <div class="game-inner">
-            <div class="left-analysis-bar" :class="{ 'analysis-unavailable': redWin === null }">
+            <div class="left-analysis-bar" :class="{ 'analysis-unavailable': whiteWin === null }">
                 <div class="advantage advantage-blue bg-primary"></div>
                 <div class="advantage advantage-red bg-danger"></div>
             </div>
@@ -505,9 +566,9 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                 <div class="card shadow">
                     <div class="card-body">
                         <p class="small">
-                            KataHex plays itself from an even opening, red well and blue badly, until red is winning.
-                            Then red is yours, on a clock, and KataHex plays blue for real.
-                            Make as many moves as you can before KataHex rates red under the line.
+                            KataHex plays itself from an even opening, your side well and the other badly,
+                            until your side is winning. Then it is yours, on a clock, and KataHex plays the
+                            other for real. Make as many moves as you can before KataHex rates you under the line.
                         </p>
                         <div v-if="onCpu" class="alert alert-warning small py-2 cpu-note">
                             This device's GPU could not run KataHex, so the net runs on its CPU,
@@ -520,12 +581,18 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                                 @click="useOneVisit()"
                             >Use 1 visit</button>
                         </div>
+                        <p v-if="error" class="text-danger small self-play-error">{{ error }}</p>
                         <form class="settings" @submit.prevent="start()">
                             <label>Board size <input v-model.number="form.boardSize" type="number" min="3" max="19" class="form-control form-control-sm"></label>
-                            <label>Blue's visits <input v-model.number="form.opponentVisits" type="number" min="1" class="form-control form-control-sm"></label>
+                            <label>You play <select v-model="form.color" class="form-select form-select-sm">
+                                <option value="random">red or blue, at random</option>
+                                <option value="red">red</option>
+                                <option value="blue">blue</option>
+                            </select></label>
+                            <label>KataHex's visits <input v-model.number="form.opponentVisits" type="number" min="1" class="form-control form-control-sm"></label>
                             <label>Rating visits <input v-model.number="form.evalVisits" type="number" min="1" class="form-control form-control-sm"></label>
                             <fieldset>
-                                <legend>Blue's self-play moves, as % of its best move's policy</legend>
+                                <legend>Your opponent's self-play moves, as % of its best move's policy</legend>
                                 <label>from <input v-model.number="form.weakMin" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
                                 <label>to <input v-model.number="form.weakMax" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
                             </fieldset>
@@ -538,13 +605,20 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                                 </label>
                             </div>
                             <fieldset>
-                                <legend>You take over red after</legend>
+                                <legend>You take over after</legend>
                                 <label>at least this many moves <input v-model.number="form.minSelfPlayMoves" type="number" min="0" class="form-control form-control-sm"></label>
-                                <label>and at red's winrate, % <input v-model.number="form.startWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
+                                <label>and at your winrate, %<span v-if="oddsScale" class="text-body-secondary"> ({{ formOdds(form.startWinrate) }})</span> <input v-model.number="form.startWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
                             </fieldset>
                             <fieldset>
-                                <legend>You lose when red's winrate drops</legend>
-                                <label>under, % <input v-model.number="form.loseWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
+                                <legend>You lose when your winrate drops</legend>
+                                <label>under, %<span v-if="oddsScale" class="text-body-secondary"> ({{ formOdds(form.loseWinrate) }})</span> <input v-model.number="form.loseWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
+                                <div class="form-check">
+                                    <input id="survival-odds" v-model="localSettings.hexplorerOddsScale" type="checkbox" class="form-check-input">
+                                    <label for="survival-odds" class="form-check-label">
+                                        Show winrates as odds, and the bar and the graph in log-odds,
+                                        where 99.9% and 99.99% stay apart (the analysis board's option too)
+                                    </label>
+                                </div>
                             </fieldset>
                             <fieldset>
                                 <legend>Clock, seconds</legend>
@@ -595,7 +669,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                     <span v-if="phase === 'selfplay' || phase === 'thinking'" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
                     {{ status }}
                 </span>
-                <span class="small">red <strong class="red-winrate">{{ formatRed(redWin) }}</strong></span>
+                <span class="small">you <strong class="your-winrate">{{ formatWin(yourWin) }}</strong></span>
                 <button
                     v-if="phase === 'selfplay' || playing"
                     type="button"
