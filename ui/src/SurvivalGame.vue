@@ -373,7 +373,7 @@ const selfPlay = async (gen: number): Promise<void> => {
             continue;
         }
 
-        status.value = `KataHex plays itself, move ${board.moves.length + 1}…`;
+        status.value = `Self-play, move ${board.moves.length + 1}…`;
 
         if (board.toMove !== good) {
             const policy = await ask(gen, 1);
@@ -508,7 +508,8 @@ const yourTurn = (): void => {
         survived: survived.value,
     });
     phase.value = 'player';
-    status.value = `Your move, as ${colorName(you.value)}.`;
+    // Short, to fit a phone's width beside the buttons; the top bar says which side is theirs.
+    status.value = 'Your move';
     stopTicker();
     syncTakeBack();
 
@@ -660,11 +661,13 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
 <template>
     <div class="survival bg-body">
         <div class="top-bar border-bottom">
-            <strong class="me-auto">Survive KataHex</strong>
-            <span v-if="phase !== 'setup'" class="small text-body-secondary">
-                you play <strong :class="you === 0 ? 'text-danger' : 'text-primary'" class="you-color">{{ colorName(you) }}</strong> ·
-                survived <strong class="text-body survived">{{ survived }}</strong>
-                <template v-if="bestBefore !== null"> · best {{ bestBefore }}</template>
+            <strong class="title">Survive KataHex</strong>
+            <span class="info small text-body-secondary">
+                <template v-if="phase !== 'setup'">
+                    you play <strong :class="you === 0 ? 'text-danger' : 'text-primary'" class="you-color">{{ colorName(you) }}</strong> ·
+                    survived <strong class="text-body survived">{{ survived }}</strong>
+                    <template v-if="bestBefore !== null"> · best {{ bestBefore }}</template>
+                </template>
             </span>
             <span
                 v-if="clockShown"
@@ -793,20 +796,28 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
         </div>
 
         <div class="bottom-bar border-top">
-            <EvaluationGraph
-                v-if="evalHistory.length"
-                :evalHistory
-                :cursorIndex="evalHistory.length - 1"
-                :scale="oddsScale ? logitScale : undefined"
-                :format="oddsScale ? formatOdds : undefined"
-                class="graph bg-body"
-            />
-            <div class="d-flex align-items-center gap-2">
+            <!-- Its room is kept while it is empty, so that the board does not jump when it fills. -->
+            <div class="graph-slot">
+                <EvaluationGraph
+                    v-if="evalHistory.length"
+                    :evalHistory
+                    :cursorIndex="evalHistory.length - 1"
+                    :scale="oddsScale ? logitScale : undefined"
+                    :format="oddsScale ? formatOdds : undefined"
+                    class="graph bg-body"
+                />
+            </div>
+            <div class="status-row d-flex align-items-center gap-2">
                 <span class="status me-auto small">
                     <span v-if="phase === 'selfplay' || phase === 'thinking'" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
                     {{ status }}
                 </span>
-                <span class="small">you <strong class="your-winrate">{{ formatWin(yourWin) }}</strong></span>
+                <!-- In the player's colour, which says whose it is in less room than a word. -->
+                <strong
+                    class="your-winrate small"
+                    :class="yourWin === null ? '' : you === 0 ? 'text-danger' : 'text-primary'"
+                    title="Your winrate"
+                >{{ formatWin(yourWin) }}</strong>
                 <button
                     v-if="playing && takeBackOn"
                     type="button"
@@ -840,9 +851,29 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
     align-items center
     gap 0.75rem
     padding 0.35rem 0.75rem
+    // Tall enough for the clock, which only shows during a game.
+    min-height 2.75rem
+    flex-shrink 0
+
+    // One line each, so that the board does not jump when a game starts on a narrow phone.
+    .title
+        white-space nowrap
+
+        // What the info beside it says matters more on a narrow phone: which side is the player's.
+        @media (max-width: 420px)
+            display none
+
+    .info
+        flex 1 1 auto
+        min-width 0
+        white-space nowrap
+        overflow hidden
+        text-overflow ellipsis
+        text-align right
 
 .clock
     font-size 1.4rem
+    line-height 1
     min-width 4.5ch
     text-align right
 
@@ -934,7 +965,26 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
     flex-shrink 0
     padding 0.35rem 0.75rem
 
-    .graph
+    // One line whatever the status says, so that the board above does not jump when it changes.
+    .status
+        flex 1 1 auto
+        min-width 0
+        white-space nowrap
+        overflow hidden
+        text-overflow ellipsis
+
+    .status ~ *
+        flex-shrink 0
+        white-space nowrap
+
+    .graph-slot
         height 2.5rem
         margin-bottom 0.35rem
+
+    .graph
+        height 100%
+
+    // As tall as the button that comes and goes in it.
+    .status-row
+        min-height 2rem
 </style>
