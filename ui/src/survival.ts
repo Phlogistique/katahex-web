@@ -50,8 +50,9 @@ export type SurvivalSettings = {
     cap: number;
 };
 
+/** 14x14 by default: on 11x11 red's winrates saturate too fast for there to be a game. */
 export const DEFAULT_SURVIVAL_SETTINGS: SurvivalSettings = {
-    boardSize: 11,
+    boardSize: 14,
     opponentVisits: 100,
     evalVisits: 200,
     weakMin: 0.05,

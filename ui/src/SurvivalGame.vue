@@ -16,6 +16,7 @@ import { storeToRefs } from 'pinia';
 import { GameView, PlayingGameFacade } from '@playhex/pixi-board';
 import type { HexMove } from '@playhex/move-notation';
 import { engine, SearchAborted, type EngineAnalysis } from './engine.js';
+import { analysisStore } from './analysisStore.js';
 import usePlayerLocalSettingsStore from './client/stores/playerLocalSettingsStore.js';
 import { PlayerSettingsFacade } from './client/services/board-view-facades/PlayerSettingsFacade.js';
 import { formatOdds, logitScale } from './winrateScale.js';
@@ -148,6 +149,13 @@ const ask = async (gen: number, visits: number): Promise<EngineAnalysis> => {
     for (let attempt = 0; ; ++attempt) {
         try {
             const analysis = await engine.analyse(input, visits);
+
+            // Into the analysis board's store, whether or not the game is still on: loaded into
+            // the board, a game is then drawn on its graph from the searches it was played
+            // with, wherever they were as deep as the board's own analyzer asks for, rather than
+            // searched all over again.
+            analysisStore.write(input, analysis);
+
             alive(gen);
             return analysis;
         } catch (e) {

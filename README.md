@@ -404,10 +404,16 @@ Then red is the player's, with no swap, on a Fischer clock of 20 seconds plus 5 
 and KataHex answers as blue with its own search. Each of the player's moves is rated before
 blue answers; the score is how many moves the player makes before red is rated under 10%.
 
-Every number there can be changed before a game, and the best score is kept for each
-combination of them, since a score only compares with games played the same way. The clock
-stops while KataHex is thinking. The analysis board's searches are suspended while the game is
-open, so its searches have the engine to themselves.
+It is played on 14x14 by default: on 11x11 the winrates saturate so fast that there is
+hardly a game. Every number there can be changed before a game, and the best score is kept
+for each combination of them, since a score only compares with games played the same way. The
+clock stops while KataHex is thinking. The analysis board's searches are suspended while the
+game is open, so its searches have the engine to themselves.
+
+A finished game can be loaded into the analysis board, to see where it was lost. Every search
+the game ran goes into the board's analysis store, so the evaluation graph draws the positions
+the game already rated without searching them again, wherever the game's search was as deep
+as the board's analyzer asks for (200 visits by default, as are the game's ratings).
 
 ### Search speed, 11x11 on the Iris Xe laptop
 
