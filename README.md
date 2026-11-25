@@ -426,15 +426,15 @@ swaps it or not at random, likelier the stronger it is, as PlayHex's own AIs do.
 is then fair to take, and the player's is drawn at random unless chosen. KataHex plays itself,
 the player's side taking the move its rating search prefers and the other a random move whose
 network policy is between 5% and 30% of its best move's, until the rating search gives the
-player's side at least 90%. Then that side is the player's, on a Fischer clock of 20 seconds
+player's side at least 90%, within 20 moves; past them, or if the game ends first, the game
+stops there and says to change the settings, rather than trying again. Then that side is the player's, on a Fischer clock of 20 seconds
 plus 5 a move that increments never take past 25, and KataHex answers with its own search.
 Each of the player's moves is rated before KataHex answers; the score is how many moves the
 player makes before their side is rated under 10%.
 
 The swap can be turned off. Without it red is winning from the start, KataHex rating the
-empty board 99.8% for red on 11x11 and 99.6% on 14x14, so a minimum number of self-play moves
-can also be set, for a game to start somewhere other than an empty board. From a fair opening,
-self-play reaches 90% in about twenty moves on 14x14.
+empty board 99.8% for red on 11x11 and 99.6% on 14x14. From a fair opening, at one visit on
+14x14, self-play got there within 20 moves in four games out of five.
 
 The thresholds can be set to a millionth of a percent, and the odds option shows the bar and
 the graph in log-odds, for playing on 11x11 between 99.99% and 0.01%. Whether KataHex's
@@ -442,8 +442,7 @@ winrates mean anything to a human that far out is an open question. The net alon
 visit, does not get there: in self-play on 11x11 it rates the winning side at most around
 4000:1, near move 30, and then less and less sure as the board fills, down to a few hundred to
 one when that side connects. A search may do better, since it sees connections coming; that is
-untested. Self-play that cannot reach its threshold, the board filling first, gives up after
-four games and says how high it got.
+untested.
 
 It is played on 14x14 by default: on 11x11 the winrates saturate so fast that there is
 hardly a game. Every number there can be changed before a game, and the best score is kept

@@ -63,7 +63,7 @@ const toForm = (s: SurvivalSettings) => ({
     weakMin: toPercent(s.weakMin),
     weakMax: toPercent(s.weakMax),
     swap: s.swap,
-    minSelfPlayMoves: s.minSelfPlayMoves,
+    maxSelfPlayMoves: s.maxSelfPlayMoves,
     startWinrate: toPercent(s.startWinrate),
     loseWinrate: toPercent(s.loseWinrate),
     initial: s.initial,
@@ -348,13 +348,6 @@ const openWithSwap = (): boolean => {
 };
 
 /**
- * Self-play that never reaches the threshold: the side it favours connects, or the board fills,
- * before it is rated that high. The net alone, on 11x11, tops out around 4000:1 and then grows
- * less sure as the board fills, so 99.99% at one visit is such a threshold.
- */
-const MAX_SELF_PLAY_RESTARTS = 3;
-
-/**
  * The player's side at its best against the other playing middling moves, until the player's
  * side is clearly winning. Its search is the evaluation's: one search both rates the position
  * and picks its move.
@@ -363,27 +356,18 @@ const selfPlay = async (gen: number): Promise<void> => {
     phase.value = 'selfplay';
 
     const good = you.value;
-    let restarts = 0;
-    let peak = 0;
+    const target = `${colorName(good)} at ${percent(settings.startWinrate)}`;
 
     for (;;) {
         if (board.winner() !== null || board.full()) {
-            // The side KataHex favours should have been rated winning long before it won.
-            if (++restarts > MAX_SELF_PLAY_RESTARTS) {
-                throw new SelfPlayStuck(`Self-play never rated ${colorName(good)} at ${percent(settings.startWinrate)}, `
-                    + `${restarts} games running, at most ${percent(peak)}: lower the threshold or raise the rating visits.`);
-            }
-
-            await newBoard();
-            evalHistory.value = [];
+            throw new SelfPlayStuck(`Sorry, the game ended before self-play got ${target}. Change your settings.`);
         }
 
         if (board.moves.length === 0 && settings.swap && openWithSwap()) {
             continue;
         }
 
-        status.value = `KataHex plays itself, move ${board.moves.length + 1}`
-            + `${restarts ? `, game ${restarts + 1}` : ''}…`;
+        status.value = `KataHex plays itself, move ${board.moves.length + 1}…`;
 
         if (board.toMove !== good) {
             const policy = await ask(gen, 1);
@@ -401,11 +385,15 @@ const selfPlay = async (gen: number): Promise<void> => {
 
         whiteWin.value = rated.whiteWin ?? 0.5;
         evalHistory.value = [...evalHistory.value, whiteWin.value];
-        peak = Math.max(peak, yourWin.value!);
 
-        if (board.moves.length >= settings.minSelfPlayMoves && yourWin.value! >= settings.startWinrate) {
+        if (yourWin.value! >= settings.startWinrate) {
             handOver();
             return;
+        }
+
+        if (board.moves.length >= settings.maxSelfPlayMoves) {
+            throw new SelfPlayStuck(`Sorry, ${board.moves.length} moves of self-play did not get ${target}: `
+                + `it got to ${percent(yourWin.value!)}. Change your settings.`);
         }
 
         play(searchedMove(rated));
@@ -647,9 +635,9 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                                 </label>
                             </div>
                             <fieldset>
-                                <legend>You take over after</legend>
-                                <label>at least this many moves <input v-model.number="form.minSelfPlayMoves" type="number" min="0" class="form-control form-control-sm"></label>
-                                <label>and at your winrate, %<span v-if="oddsScale" class="text-body-secondary"> ({{ formOdds(form.startWinrate) }})</span> <input v-model.number="form.startWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
+                                <legend>Self-play</legend>
+                                <label>hands over at your winrate, %<span v-if="oddsScale" class="text-body-secondary"> ({{ formOdds(form.startWinrate) }})</span> <input v-model.number="form.startWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
+                                <label>gives up after, moves <input v-model.number="form.maxSelfPlayMoves" type="number" min="0" class="form-control form-control-sm"></label>
                             </fieldset>
                             <fieldset>
                                 <legend>You lose when your winrate drops</legend>

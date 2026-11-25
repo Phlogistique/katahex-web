@@ -2,8 +2,8 @@
  * Survival: how long can you hold a won game against KataHex?
  *
  * KataHex plays itself from a fair opening and the second player's swap decision, both from
- * PlayHex's swap maps, the player's side well and the other badly, for at least
- * `minSelfPlayMoves` moves and until it rates the player's side at least `startWinrate`. Then
+ * PlayHex's swap maps, the player's side well and the other badly, until it rates the
+ * player's side at least `startWinrate`, giving up after `maxSelfPlayMoves`. Then
  * the player takes that side, KataHex plays the other properly, and the score is how many moves
  * the player makes before KataHex rates their side under `loseWinrate`.
  *
@@ -42,17 +42,18 @@ export type SurvivalSettings = {
     /**
      * Self-play opens with a fair first move, which blue may swap, as a game with the swap rule
      * does, and either side is fair to take. Without it red is winning on the empty board
-     * already, KataHex rating it 99.8% on 11x11 and 99.6% on 14x14, and a game starts somewhere
-     * else only once `minSelfPlayMoves` are played.
+     * already, KataHex rating it 99.8% on 11x11 and 99.6% on 14x14.
      */
     swap: boolean;
 
-    /**
-     * Self-play hands the player their side once it has played at least this many moves and
-     * their side is rated at least `startWinrate`.
-     */
-    minSelfPlayMoves: number;
+    /** Self-play hands the player their side once it is rated at least this. */
     startWinrate: number;
+
+    /**
+     * Moves self-play may take to get there, the opening's included. Past them, or if the game
+     * ends first, the game is over before it began: the settings ask for too much.
+     */
+    maxSelfPlayMoves: number;
 
     /** The game ends as soon as the player's side is rated under this after one of their moves. */
     loseWinrate: number;
@@ -72,8 +73,8 @@ export const DEFAULT_SURVIVAL_SETTINGS: SurvivalSettings = {
     weakMin: 0.05,
     weakMax: 0.3,
     swap: true,
-    minSelfPlayMoves: 0,
     startWinrate: 0.9,
+    maxSelfPlayMoves: 20,
     loseWinrate: 0.1,
     initial: 20,
     increment: 5,
@@ -100,8 +101,8 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
         weakMin,
         weakMax: number(merged.weakMax, d.weakMax, weakMin, 1),
         swap: typeof merged.swap === 'boolean' ? merged.swap : d.swap,
-        minSelfPlayMoves: Math.round(number(merged.minSelfPlayMoves, d.minSelfPlayMoves, 0, 361)),
         startWinrate: number(merged.startWinrate, d.startWinrate, 0, 1),
+        maxSelfPlayMoves: Math.round(number(merged.maxSelfPlayMoves, d.maxSelfPlayMoves, 0, 361)),
         loseWinrate: number(merged.loseWinrate, d.loseWinrate, 0, 1),
         initial: number(merged.initial, d.initial, 1, 36000),
         increment: number(merged.increment, d.increment, 0, 36000),
@@ -112,7 +113,7 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
 /** What a best score is filed under: a score only compares with games played the same way. */
 export const settingsKey = (s: SurvivalSettings): string => [
     s.boardSize, s.color, s.opponentVisits, s.evalVisits, s.weakMin, s.weakMax,
-    s.swap ? 'swap' : 'noswap', s.minSelfPlayMoves, s.startWinrate, s.loseWinrate, s.initial, s.increment, s.cap,
+    s.swap ? 'swap' : 'noswap', s.startWinrate, s.maxSelfPlayMoves, s.loseWinrate, s.initial, s.increment, s.cap,
 ].join('/');
 
 export type Stone = 0 | 1;
