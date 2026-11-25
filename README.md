@@ -426,15 +426,16 @@ swaps it or not at random, likelier the stronger it is, as PlayHex's own AIs do.
 is then fair to take, and the player's is drawn at random unless chosen. KataHex plays itself,
 the player's side taking the move its rating search prefers and the other a random move whose
 network policy is between 5% and 30% of its best move's, until the rating search gives the
-player's side at least 90%, within 20 moves; past them, or if the game ends first, the game
-stops there and says to change the settings, rather than trying again. Then that side is the player's, on a Fischer clock of 20 seconds
+player's side at least 90%, or for 20 moves at most, after which the player takes over
+wherever it got; if the game ends first, it stops there and says to change the settings. Then that side is the player's, on a Fischer clock of 20 seconds
 plus 5 a move that increments never take past 25, and KataHex answers with its own search.
 Each of the player's moves is rated before KataHex answers; the score is how many moves the
 player makes before their side is rated under 10%.
 
 The swap can be turned off. Without it red is winning from the start, KataHex rating the
 empty board 99.8% for red on 11x11 and 99.6% on 14x14. From a fair opening, at one visit on
-14x14, self-play got there within 20 moves in four games out of five.
+14x14, self-play got there within 20 moves in four games out of five; the fifth was handed
+over at 76%.
 
 The thresholds can be set to a millionth of a percent, and the odds option shows the bar and
 the graph in log-odds, for playing on 11x11 between 99.99% and 0.01%. Whether KataHex's

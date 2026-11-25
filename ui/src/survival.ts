@@ -3,7 +3,7 @@
  *
  * KataHex plays itself from a fair opening and the second player's swap decision, both from
  * PlayHex's swap maps, the player's side well and the other badly, until it rates the
- * player's side at least `startWinrate`, giving up after `maxSelfPlayMoves`. Then
+ * player's side at least `startWinrate`, or for `maxSelfPlayMoves` at most. Then
  * the player takes that side, KataHex plays the other properly, and the score is how many moves
  * the player makes before KataHex rates their side under `loseWinrate`.
  *
@@ -50,8 +50,9 @@ export type SurvivalSettings = {
     startWinrate: number;
 
     /**
-     * Moves self-play may take to get there, the opening's included. Past them, or if the game
-     * ends first, the game is over before it began: the settings ask for too much.
+     * Moves self-play may take to get there, the opening's included: past them the player takes
+     * over wherever it got. If the game ends first, it is over before it began, and the settings
+     * ask for too much.
      */
     maxSelfPlayMoves: number;
 

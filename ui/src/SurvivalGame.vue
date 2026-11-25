@@ -386,14 +386,10 @@ const selfPlay = async (gen: number): Promise<void> => {
         whiteWin.value = rated.whiteWin ?? 0.5;
         evalHistory.value = [...evalHistory.value, whiteWin.value];
 
-        if (yourWin.value! >= settings.startWinrate) {
+        // At the threshold, or out of self-play moves: either way it is the player's game now.
+        if (yourWin.value! >= settings.startWinrate || board.moves.length >= settings.maxSelfPlayMoves) {
             handOver();
             return;
-        }
-
-        if (board.moves.length >= settings.maxSelfPlayMoves) {
-            throw new SelfPlayStuck(`Sorry, ${board.moves.length} moves of self-play did not get ${target}: `
-                + `it got to ${percent(yourWin.value!)}. Change your settings.`);
         }
 
         play(searchedMove(rated));
@@ -637,7 +633,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                             <fieldset>
                                 <legend>Self-play</legend>
                                 <label>hands over at your winrate, %<span v-if="oddsScale" class="text-body-secondary"> ({{ formOdds(form.startWinrate) }})</span> <input v-model.number="form.startWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
-                                <label>gives up after, moves <input v-model.number="form.maxSelfPlayMoves" type="number" min="0" class="form-control form-control-sm"></label>
+                                <label>or after this many moves <input v-model.number="form.maxSelfPlayMoves" type="number" min="0" class="form-control form-control-sm"></label>
                             </fieldset>
                             <fieldset>
                                 <legend>You lose when your winrate drops</legend>
