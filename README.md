@@ -452,6 +452,10 @@ for each combination of them, since a score only compares with games played the 
 clock stops while KataHex is thinking. The analysis board's searches are suspended while the
 game is open, so its searches have the engine to themselves.
 
+Take back, on unless turned off, takes back the player's last move and KataHex's answer, with
+the time and the score they had, during a turn or once a move has lost; best scores are kept
+apart for games with and without it.
+
 Again replays the same game: the position the last one was handed over at, the same side, a
 full clock; KataHex answers much as it did, so a line that lost can be tried another way. New
 game self-plays a new one. The randomness is in the opening, the swap, the side drawn and the

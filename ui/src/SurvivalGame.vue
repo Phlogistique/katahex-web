@@ -63,6 +63,7 @@ const toForm = (s: SurvivalSettings) => ({
     weakMin: toPercent(s.weakMin),
     weakMax: toPercent(s.weakMax),
     swap: s.swap,
+    takeBack: s.takeBack,
     maxSelfPlayMoves: s.maxSelfPlayMoves,
     startWinrate: toPercent(s.startWinrate),
     loseWinrate: toPercent(s.loseWinrate),
@@ -277,6 +278,9 @@ const resetGame = async (): Promise<number> => {
 
     stopTicker();
     clock = null;
+    turns.length = 0;
+    canTakeBack.value = false;
+    takeBackOn.value = settings.takeBack;
     evalHistory.value = [];
     whiteWin.value = null;
     survived.value = 0;
@@ -429,7 +433,75 @@ const handOver = (): void => {
     yourTurn();
 };
 
+/**
+ * Where each of the player's turns started, to take a move back to: the moves on the board then,
+ * what was rated, the score and the time left.
+ */
+type Turn = { moves: number, whiteWin: number | null, evals: number, survived: number, clockMs: number };
+
+const turns: Turn[] = [];
+
+/**
+ * The turn a take back returns to: the last one before the position on the board. During a
+ * turn that is the one before it; once a move has lost, the turn it was played in.
+ */
+const takeBackTarget = (): Turn | undefined => {
+    for (let i = turns.length - 1; i >= 0; --i) {
+        if (turns[i].moves < board.moves.length) {
+            return turns[i];
+        }
+    }
+
+    return undefined;
+};
+
+/** Reactive stand-in for whether takeBackTarget() has a turn: `turns` and `board` are not reactive. */
+const canTakeBack = ref(false);
+
+/** The game's settings allow take backs; `settings` is not reactive either. */
+const takeBackOn = ref(false);
+
+const syncTakeBack = (): void => {
+    canTakeBack.value = settings.takeBack && (phase.value === 'player' || phase.value === 'over')
+        && handedOver.value && takeBackTarget() !== undefined;
+};
+
+/** The player's last move and KataHex's answer back, with the time and the score they had. */
+const takeBack = (): void => {
+    const target = takeBackTarget();
+
+    if (!settings.takeBack || !target || !(phase.value === 'player' || phase.value === 'over')) {
+        return;
+    }
+
+    ++generation;
+    stopTicker();
+
+    while (board.moves.length > target.moves) {
+        board.undo();
+        facade?.undoLastMove();
+    }
+
+    // yourTurn() records this turn again.
+    turns.splice(turns.indexOf(target));
+
+    whiteWin.value = target.whiteWin;
+    evalHistory.value = evalHistory.value.slice(0, target.evals);
+    survived.value = target.survived;
+    endReason.value = '';
+    clock = new FischerClock(target.clockMs / 1000, settings.increment, settings.cap);
+    clockMs.value = clock.left();
+    yourTurn();
+};
+
 const yourTurn = (): void => {
+    turns.push({
+        moves: board.moves.length,
+        whiteWin: whiteWin.value,
+        evals: evalHistory.value.length,
+        survived: survived.value,
+        clockMs: clock!.left(),
+    });
     phase.value = 'player';
     status.value = `Your move, as ${colorName(you.value)}.`;
     clock!.start();
@@ -441,6 +513,7 @@ const yourTurn = (): void => {
             finish('Out of time.');
         }
     }, 100);
+    syncTakeBack();
 };
 
 const onClick = async (move: string): Promise<void> => {
@@ -468,6 +541,7 @@ const onClick = async (move: string): Promise<void> => {
     }
 
     phase.value = 'thinking';
+    syncTakeBack();
     status.value = 'KataHex answers…';
 
     try {
@@ -504,9 +578,16 @@ const onClick = async (move: string): Promise<void> => {
 const finish = (reason: string): void => {
     stopTicker();
     clock?.stop();
+
+    // The ticker may not have run for a while: a browser slows the timers of a page it hides.
+    if (clock) {
+        clockMs.value = clock.left();
+    }
+
     phase.value = 'over';
     endReason.value = reason;
     status.value = '';
+    syncTakeBack();
 
     const key = settingsKey(settings);
     const previous = localSettings.value.survivalBest?.[key] ?? 0;
@@ -632,6 +713,10 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                                     which blue may take
                                 </label>
                             </div>
+                            <div class="form-check">
+                                <input id="survival-take-back" v-model="form.takeBack" type="checkbox" class="form-check-input">
+                                <label for="survival-take-back" class="form-check-label">Allow take backs</label>
+                            </div>
                             <fieldset>
                                 <legend>Self-play</legend>
                                 <label>hands over at your winrate, %<span v-if="oddsScale" class="text-body-secondary"> ({{ formOdds(form.startWinrate) }})</span> <input v-model.number="form.startWinrate" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
@@ -672,6 +757,13 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                         <p v-else-if="bestBefore !== null" class="small text-body-secondary mb-1">Best with these settings: {{ bestBefore }}.</p>
                         <div class="d-flex flex-wrap gap-2 mt-2">
                             <button
+                                v-if="canTakeBack"
+                                type="button"
+                                class="btn btn-success take-back-btn"
+                                title="Your last move and KataHex's answer, and play on"
+                                @click="takeBack()"
+                            >Take back</button>
+                            <button
                                 v-if="lastHandover"
                                 type="button"
                                 class="btn btn-success again-btn"
@@ -702,6 +794,13 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                     {{ status }}
                 </span>
                 <span class="small">you <strong class="your-winrate">{{ formatWin(yourWin) }}</strong></span>
+                <button
+                    v-if="playing && takeBackOn"
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary take-back-btn"
+                    :disabled="!canTakeBack"
+                    @click="takeBack()"
+                >Take back</button>
                 <button
                     v-if="phase === 'selfplay' || playing"
                     type="button"

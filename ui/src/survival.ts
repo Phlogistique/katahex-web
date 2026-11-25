@@ -59,6 +59,9 @@ export type SurvivalSettings = {
     /** The game ends as soon as KataHex answers a move and the player's side is rated under this. */
     loseWinrate: number;
 
+    /** The player may take back a move and KataHex's answer, even the one that lost. */
+    takeBack: boolean;
+
     /** Fischer clock, in seconds: the player starts with `initial`, gains `increment` a move, never past `cap` (0: no cap). */
     initial: number;
     increment: number;
@@ -74,6 +77,7 @@ export const DEFAULT_SURVIVAL_SETTINGS: SurvivalSettings = {
     weakMin: 0.05,
     weakMax: 0.3,
     swap: true,
+    takeBack: true,
     startWinrate: 0.9,
     maxSelfPlayMoves: 20,
     loseWinrate: 0.1,
@@ -102,6 +106,7 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
         weakMin,
         weakMax: number(merged.weakMax, d.weakMax, weakMin, 1),
         swap: typeof merged.swap === 'boolean' ? merged.swap : d.swap,
+        takeBack: typeof merged.takeBack === 'boolean' ? merged.takeBack : d.takeBack,
         startWinrate: number(merged.startWinrate, d.startWinrate, 0, 1),
         maxSelfPlayMoves: Math.round(number(merged.maxSelfPlayMoves, d.maxSelfPlayMoves, 0, 361)),
         loseWinrate: number(merged.loseWinrate, d.loseWinrate, 0, 1),
@@ -114,7 +119,7 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
 /** What a best score is filed under: a score only compares with games played the same way. */
 export const settingsKey = (s: SurvivalSettings): string => [
     s.boardSize, s.color, s.opponentVisits, s.evalVisits, s.weakMin, s.weakMax,
-    s.swap ? 'swap' : 'noswap', s.startWinrate, s.maxSelfPlayMoves, s.loseWinrate, s.initial, s.increment, s.cap,
+    s.swap ? 'swap' : 'noswap', s.takeBack ? 'takeback' : 'notakeback', s.startWinrate, s.maxSelfPlayMoves, s.loseWinrate, s.initial, s.increment, s.cap,
 ].join('/');
 
 export type Stone = 0 | 1;
@@ -161,6 +166,29 @@ export class SurvivalBoard
 
         this.cells[cell.row][cell.col] = this.toMove;
         this.moves.push(move);
+    }
+
+    /** Takes the last move back, the swap included, and returns it. */
+    undo(): string {
+        const move = this.moves.pop();
+
+        if (move === undefined) {
+            throw new Error('no move to take back');
+        }
+
+        if (move === SWAP) {
+            const first = this.parse(this.moves[0])!;
+            const mirrored = this.parse(mirrorMove(this.moves[0] as Parameters<typeof mirrorMove>[0]))!;
+
+            this.cells[mirrored.row][mirrored.col] = null;
+            this.cells[first.row][first.col] = 0;
+        } else {
+            const cell = this.parse(move)!;
+
+            this.cells[cell.row][cell.col] = null;
+        }
+
+        return move;
     }
 
     /**
