@@ -67,6 +67,7 @@ const toForm = (s: SurvivalSettings) => ({
     maxSelfPlayMoves: s.maxSelfPlayMoves,
     startWinrate: toPercent(s.startWinrate),
     loseWinrate: toPercent(s.loseWinrate),
+    timed: s.timed,
     initial: s.initial,
     increment: s.increment,
     cap: s.cap,
@@ -281,7 +282,7 @@ const resetGame = async (): Promise<number> => {
     turns.length = 0;
     canTakeBack.value = false;
     takeBackOn.value = settings.takeBack;
-    timed.value = settings.initial > 0;
+    timed.value = settings.timed;
     evalHistory.value = [];
     whiteWin.value = null;
     survived.value = 0;
@@ -462,7 +463,7 @@ const canTakeBack = ref(false);
 /** The game's settings allow take backs; `settings` is not reactive either. */
 const takeBackOn = ref(false);
 
-/** The game is on a clock: a start of 0 seconds is none, all the time in the world. */
+/** The game is on a clock; without one the player has all the time in the world. */
 const timed = ref(true);
 
 /** Out of time, and so out of the game: a take back would give no time back to play it with. */
@@ -703,7 +704,7 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
                         <form class="settings" @submit.prevent="start()">
                             <label>Board size <input v-model.number="form.boardSize" type="number" min="3" max="19" class="form-control form-control-sm"></label>
                             <label>You play <select v-model="form.color" class="form-select form-select-sm">
-                                <option value="random">red or blue, at random</option>
+                                <option value="random">random</option>
                                 <option value="red">red</option>
                                 <option value="blue">blue</option>
                             </select></label>
@@ -739,9 +740,12 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
                                     <label for="survival-odds" class="form-check-label">Show winrates as odds (999:1)</label>
                                 </div>
                             </fieldset>
-                            <fieldset>
-                                <legend>Clock, seconds</legend>
-                                <label>start (0: none) <input v-model.number="form.initial" type="number" min="0" step="any" class="form-control form-control-sm"></label>
+                            <fieldset :disabled="!form.timed">
+                                <legend class="form-check">
+                                    <input id="survival-timed" v-model="form.timed" type="checkbox" class="form-check-input">
+                                    <label for="survival-timed" class="form-check-label">Clock, seconds</label>
+                                </legend>
+                                <label>start <input v-model.number="form.initial" type="number" min="1" step="any" class="form-control form-control-sm"></label>
                                 <label>+ a move <input v-model.number="form.increment" type="number" min="0" step="any" class="form-control form-control-sm"></label>
                                 <label>at most <input v-model.number="form.cap" type="number" min="0" step="any" class="form-control form-control-sm" title="0 for no cap"></label>
                             </fieldset>

@@ -63,8 +63,14 @@ export type SurvivalSettings = {
     takeBack: boolean;
 
     /**
-     * Fischer clock, in seconds: the player starts with `initial` (0: no clock), gains
-     * `increment` a move, never past `cap` (0: no cap).
+     * Whether the player is on a clock. Without one they have all the time in the world, and
+     * the three numbers below are kept for when it is turned back on.
+     */
+    timed: boolean;
+
+    /**
+     * Fischer clock, in seconds: the player starts with `initial`, gains `increment` a move,
+     * never past `cap` (0: no cap).
      */
     initial: number;
     increment: number;
@@ -84,6 +90,7 @@ export const DEFAULT_SURVIVAL_SETTINGS: SurvivalSettings = {
     startWinrate: 0.9,
     maxSelfPlayMoves: 20,
     loseWinrate: 0.1,
+    timed: true,
     initial: 20,
     increment: 5,
     cap: 25,
@@ -113,7 +120,9 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
         startWinrate: number(merged.startWinrate, d.startWinrate, 0, 1),
         maxSelfPlayMoves: Math.round(number(merged.maxSelfPlayMoves, d.maxSelfPlayMoves, 0, 361)),
         loseWinrate: number(merged.loseWinrate, d.loseWinrate, 0, 1),
-        initial: number(merged.initial, d.initial, 0, 36000),
+        // A start of 0 was how an earlier version turned the clock off.
+        timed: typeof stored?.timed === 'boolean' ? stored.timed : Number(merged.initial) !== 0,
+        initial: Number(merged.initial) > 0 ? number(merged.initial, d.initial, 1, 36000) : d.initial,
         increment: number(merged.increment, d.increment, 0, 36000),
         cap: number(merged.cap, d.cap, 0, 36000),
     };
@@ -122,7 +131,8 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
 /** What a best score is filed under: a score only compares with games played the same way. */
 export const settingsKey = (s: SurvivalSettings): string => [
     s.boardSize, s.color, s.opponentVisits, s.evalVisits, s.weakMin, s.weakMax,
-    s.swap ? 'swap' : 'noswap', s.takeBack ? 'takeback' : 'notakeback', s.startWinrate, s.maxSelfPlayMoves, s.loseWinrate, s.initial, s.increment, s.cap,
+    s.swap ? 'swap' : 'noswap', s.takeBack ? 'takeback' : 'notakeback', s.startWinrate, s.maxSelfPlayMoves, s.loseWinrate,
+    ...(s.timed ? [s.initial, s.increment, s.cap] : ['noclock']),
 ].join('/');
 
 export type Stone = 0 | 1;
