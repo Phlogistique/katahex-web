@@ -66,7 +66,8 @@ on a phone, where it covers the board; the page takes the whole height, there be
 header; ctrl+S saves the analysis to a file; the sidebar footer credits the ui, the engine and
 the net and links the source, which is where the AGPL's source offer is reachable from. A
 Survive tab opens the survival game over the board, suspending the board's searches while it
-is open, and can load the game played into the tree.
+is open, and can load the game played into the tree, without the confirmation a load from the
+file tab asks for.
 
 `src/client/vue/hexplorer/composables/useHexplorer.ts`:
 

@@ -263,18 +263,22 @@ const newBoard = async (): Promise<void> => {
     }
 };
 
-const start = async (): Promise<void> => {
-    settings = fromForm(form);
-    Object.assign(form, toForm(settings));
-    localSettings.value.survival = { ...settings };
+/**
+ * The position the player was handed, to play it again: the moves that led to it, whose side
+ * they took, and what had been rated on the way.
+ */
+type Handover = { moves: string[], you: Stone, whiteWin: number | null, evalHistory: number[] };
 
+const lastHandover = ref<Handover | null>(null);
+
+/** Clears what a game shows, for the next one, and returns the new game's generation. */
+const resetGame = async (): Promise<number> => {
     const gen = ++generation;
 
     stopTicker();
     clock = null;
     evalHistory.value = [];
     whiteWin.value = null;
-    you.value = settings.color === 'red' ? 0 : settings.color === 'blue' ? 1 : (Math.random() < 0.5 ? 0 : 1);
     survived.value = 0;
     handover.value = 0;
     handedOver.value = false;
@@ -283,6 +287,19 @@ const start = async (): Promise<void> => {
     bestBefore.value = best.value;
 
     await newBoard();
+
+    return gen;
+};
+
+/** A new game: the settings from the form, a side drawn if it is to be, and self-play from scratch. */
+const start = async (): Promise<void> => {
+    settings = fromForm(form);
+    Object.assign(form, toForm(settings));
+    localSettings.value.survival = { ...settings };
+    lastHandover.value = null;
+    you.value = settings.color === 'red' ? 0 : settings.color === 'blue' ? 1 : (Math.random() < 0.5 ? 0 : 1);
+
+    const gen = await resetGame();
 
     try {
         await selfPlay(gen);
@@ -395,7 +412,32 @@ const selfPlay = async (gen: number): Promise<void> => {
     }
 };
 
+/**
+ * The same game again: the position the last one was handed over at, same side, same settings,
+ * a full clock. KataHex answers much as it did, so a line that lost can be tried another way.
+ */
+const again = async (): Promise<void> => {
+    const last = lastHandover.value;
+
+    if (!last) {
+        await start();
+        return;
+    }
+
+    you.value = last.you;
+    await resetGame();
+
+    for (const move of last.moves) {
+        play(move);
+    }
+
+    whiteWin.value = last.whiteWin;
+    evalHistory.value = [...last.evalHistory];
+    handOver();
+};
+
 const handOver = (): void => {
+    lastHandover.value = { moves: [...board.moves], you: you.value, whiteWin: whiteWin.value, evalHistory: [...evalHistory.value] };
     handover.value = board.moves.length;
     handedOver.value = true;
     clock = new FischerClock(settings.initial, settings.increment, settings.cap);
@@ -646,7 +688,14 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                         <p v-else-if="bestBefore === null && survived > 0" class="small text-body-secondary mb-1">Your first score with these settings.</p>
                         <p v-else-if="bestBefore !== null" class="small text-body-secondary mb-1">Best with these settings: {{ bestBefore }}.</p>
                         <div class="d-flex flex-wrap gap-2 mt-2">
-                            <button type="button" class="btn btn-success again-btn" @click="start()">Again</button>
+                            <button
+                                v-if="lastHandover"
+                                type="button"
+                                class="btn btn-success again-btn"
+                                title="From the same position, as the same side"
+                                @click="again()"
+                            >Again</button>
+                            <button type="button" class="btn btn-outline-success new-game-btn" @click="start()">New game</button>
                             <button type="button" class="btn btn-outline-secondary" @click="backToSettings()">Settings</button>
                             <button type="button" class="btn btn-outline-primary" @click="analyse()">Analyse this game</button>
                         </div>

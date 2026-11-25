@@ -12,7 +12,6 @@
 import { onKeyDown, useMediaQuery, whenever } from '@vueuse/core';
 import { computed, provide, ref, useTemplateRef, watch } from 'vue';
 import { storeToRefs } from 'pinia';
-import { t } from 'i18next';
 import { hexplorerKey, useHexplorer } from '../composables/useHexplorer.js';
 import { HEXPLORER_ANALYSIS_STATE_KEY } from '../HexplorerState.js';
 import { readHexplorerCopy } from '../services/hexplorerCopy.js';
@@ -137,14 +136,11 @@ const closeSurvival = async (): Promise<void> => {
 };
 
 /**
- * Opens the game just played on the board, the player's part of it named, after asking, as a
- * load from the file tab does, before throwing a tree away.
+ * Opens the game just played on the board, the player's part of it named. Unlike a load from
+ * the file tab, without asking first: asking to see a game is asking to have it on the board,
+ * and the tree it replaces is most often the last game's.
  */
 const analyseSurvivalGame = async (game: { size: number, moves: HexMove[], handover: number, you: 0 | 1 }): Promise<void> => {
-    if (state.value.nodes.length > 1 && !confirm(t('hexplorer.new_analysis_confirm'))) {
-        return;
-    }
-
     // Loaded while the board is still suspended: woken first, it would search the position it
     // had, and restart the engine on that board's size only to restart it again on the game's.
     await importGame({

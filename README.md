@@ -451,7 +451,13 @@ for each combination of them, since a score only compares with games played the 
 clock stops while KataHex is thinking. The analysis board's searches are suspended while the
 game is open, so its searches have the engine to themselves.
 
-A finished game can be loaded into the analysis board, to see where it was lost. Every search
+Again replays the same game: the position the last one was handed over at, the same side, a
+full clock; KataHex answers much as it did, so a line that lost can be tried another way. New
+game self-plays a new one. The randomness is in the opening, the swap, the side drawn and the
+weak side's every self-play move; the strong side and KataHex's answers are its best moves.
+
+A finished game can be loaded into the analysis board, to see where it was lost, without being
+asked to confirm: the tree it replaces is most often the last game's. Every search
 the game ran goes into the board's analysis store, so the evaluation graph draws the positions
 the game already rated without searching them again, wherever the game's search was as deep
 as the board's analyzer asks for (200 visits by default, as are the game's ratings).
