@@ -24,8 +24,28 @@ export const setAnalyzersRefresh = (refresh: () => void): void => {
     }
 };
 
-export const setAnalyzersAwake = (awake: boolean): void => {
+/** The app is in the foreground. */
+let visible = true;
+
+/** The survival game has the engine to itself. */
+let suspended = false;
+
+const syncAwake = (): void => {
     for (const analyzer of analyzers) {
-        analyzer.setAwake(awake);
+        analyzer.setAwake(visible && !suspended);
     }
+};
+
+export const setAnalyzersAwake = (awake: boolean): void => {
+    visible = awake;
+    syncAwake();
+};
+
+/**
+ * Stops the analysis board's searches while something else needs the engine, and resumes them
+ * after. What is left of the evaluation graph waits too, since it waits for the analyzer to be idle.
+ */
+export const setAnalyzersSuspended = (value: boolean): void => {
+    suspended = value;
+    syncAwake();
 };

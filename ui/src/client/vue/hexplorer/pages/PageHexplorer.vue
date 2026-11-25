@@ -6,11 +6,13 @@
  * bottom bar holds the live analysis button, analysis is on from the start since it is the
  * point of the app, the sidebar starts closed on a phone, where it would cover the board,
  * the page takes the whole height in the absence of PlayHex's header, and the sidebar
- * footer credits where the ui, the engine and the net come from.
+ * footer credits where the ui, the engine and the net come from. A tab opens this app's
+ * survival game over the board, which has the engine to itself while it is open.
  */
 import { onKeyDown, useMediaQuery, whenever } from '@vueuse/core';
 import { computed, provide, ref, useTemplateRef, watch } from 'vue';
 import { storeToRefs } from 'pinia';
+import { t } from 'i18next';
 import { hexplorerKey, useHexplorer } from '../composables/useHexplorer.js';
 import { HEXPLORER_ANALYSIS_STATE_KEY } from '../HexplorerState.js';
 import { readHexplorerCopy } from '../services/hexplorerCopy.js';
@@ -21,6 +23,7 @@ import {
     IconFolder2Open,
     IconQuestionCircle,
     IconRobot,
+    IconStopwatch,
 } from '../../icons.js';
 import HexplorerNavButtons from '../components/HexplorerNavButtons.vue';
 import LiveAnalysisButton from '../components/LiveAnalysisButton.vue';
@@ -34,6 +37,11 @@ import HexplorerAiTab from '../components/HexplorerAiTab.vue';
 import { AnalyzerInterface } from '../analyzers/AnalyzerInterface.js';
 import { createKatahexAnalyzers } from '../composables/useAnalysisEngines.js';
 import usePlayerLocalSettingsStore from '../../../stores/playerLocalSettingsStore.js';
+import type { HexMove } from '@playhex/move-notation';
+import SurvivalGame from '../../../../SurvivalGame.vue';
+import SurvivalTab from '../../../../SurvivalTab.vue';
+import { setAnalyzersSuspended } from '../../../../analyzers.js';
+import { engine } from '../../../../engine.js';
 
 // Available analysis engines, selectable in AI tab. First one is the default. AI is disabled by default.
 const analyzers: AnalyzerInterface[] = createKatahexAnalyzers();
@@ -54,6 +62,7 @@ const {
     importAnalysis,
     restoreState,
     exportAnalysis,
+    importGame,
 } = hexplorer;
 
 aiEnabled.value = true;
@@ -89,7 +98,7 @@ const isLargeScreen = useMediaQuery('(min-width: 576px)');
 
 const sidebarOpen = ref(isLargeScreen.value);
 
-type HexplorerTab = 'file' | 'tree' | 'ai' | 'help';
+type HexplorerTab = 'file' | 'tree' | 'ai' | 'survival' | 'help';
 
 const { localSettings } = storeToRefs(usePlayerLocalSettingsStore());
 
@@ -104,8 +113,50 @@ const navPanels = computed(() => [
         labelKey: 'hexplorer.tab_ai',
         badge: aiEnabled.value ? { variant: 'success', titleKey: 'hexplorer.ai_enabled' } : null,
     },
+    { key: 'survival' as const, icon: IconStopwatch, labelKey: 'hexplorer.tab_survival' },
     { key: 'help' as const, icon: IconQuestionCircle, labelKey: 'hexplorer.tab_help' },
 ]);
+
+/*
+ * The survival game, over the board. The board's searches stop while it is open, and whatever
+ * they had in flight is dropped, so that the game's searches have the engine to themselves.
+ */
+const survivalOpen = ref(false);
+
+watch(survivalOpen, open => {
+    setAnalyzersSuspended(open);
+
+    if (open) {
+        engine.abortPending();
+    }
+});
+
+const closeSurvival = async (): Promise<void> => {
+    survivalOpen.value = false;
+    await updateAnalysis();
+};
+
+/**
+ * Opens the game just played on the board, the player's part of it named, after asking, as a
+ * load from the file tab does, before throwing a tree away.
+ */
+const analyseSurvivalGame = async (game: { size: number, moves: HexMove[], handover: number }): Promise<void> => {
+    if (state.value.nodes.length > 1 && !confirm(t('hexplorer.new_analysis_confirm'))) {
+        return;
+    }
+
+    // Loaded while the board is still suspended: woken first, it would search the position it
+    // had, and restart the engine on that board's size only to restart it again on the game's.
+    await importGame({
+        boardsize: game.size,
+        moves: game.moves,
+        playerBlackName: `You, from move ${game.handover + 1}`,
+        playerWhiteName: 'KataHex',
+    });
+    survivalOpen.value = false;
+    currentTab.value = 'tree';
+    await updateAnalysis();
+};
 
 const openFileTab = (): void => {
     sidebarOpen.value = true;
@@ -223,6 +274,7 @@ const importAnalysisFromCopy = async (): Promise<void> => {
                 <HexplorerFileTab v-if="currentTab === 'file'" :importError="analysisImportError" />
                 <HexplorerHelpTab v-else-if="currentTab === 'help'" @dismiss="currentTab = 'tree'" />
                 <HexplorerAiTab v-else-if="currentTab === 'ai'" :analyzers />
+                <SurvivalTab v-else-if="currentTab === 'survival'" @play="survivalOpen = true" />
                 <HexplorerTreeTab v-else />
             </div>
 
@@ -240,6 +292,8 @@ const importAnalysisFromCopy = async (): Promise<void> => {
                 ><IconArrowBarRight /> {{ $t('close') }}</button>
             </template>
         </AppResizableSidebar>
+
+        <SurvivalGame v-if="survivalOpen" @close="closeSurvival()" @analyse="analyseSurvivalGame" />
     </div>
 </template>
 

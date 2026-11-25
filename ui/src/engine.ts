@@ -5,8 +5,11 @@ import type { AnalysisInput, AnalysisOutput } from './shared/app/hexplorer.js';
 /** What the search found about one candidate move, which is an analysis of its position. */
 export type ChildAnalysis = { move: string; whiteWin: number; visits: number };
 
-/** An analysis plus how much search it is worth, which the live search reports as it grows. */
-export type EngineAnalysis = AnalysisOutput & { visits: number; children: ChildAnalysis[] };
+/**
+ * An analysis plus how much search it is worth, which the live search reports as it grows, and
+ * the network's own policy, row-major and negative where a move cannot be played.
+ */
+export type EngineAnalysis = AnalysisOutput & { visits: number; children: ChildAnalysis[]; prior: number[][] };
 
 type Native = {
     start(boardSize: number): void;
@@ -201,7 +204,7 @@ class Engine {
     }
 
     /** Drops the one-shot searches in flight, telling the engine to stop them. */
-    private abortPending(): void {
+    abortPending(): void {
         for (const [id, request] of this.pending) {
             this.pending.delete(id);
             window.Native?.query(JSON.stringify({ id: 'x', action: 'terminate', terminateId: id }));
@@ -353,6 +356,9 @@ class Engine {
             whiteWin: forWhite(root.winrate),
             policy: this.toPolicyGrid(reply),
             visits: root.visits,
+            prior: reply.policy
+                ? grid(this.size, (row, col) => reply.policy![row * this.size + col])
+                : grid(this.size, () => -1),
             children: (reply.moveInfos ?? []).map(info => ({
                 move: info.move,
                 whiteWin: forWhite(info.winrate),

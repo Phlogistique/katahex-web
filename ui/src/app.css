@@ -21,6 +21,8 @@ html, body {
     top: 0;
     margin: 0;
     pointer-events: none;
+    /* Over the survival game too, which covers the whole page. */
+    z-index: 2000;
     padding: 0.35rem 0.6rem;
     font-size: 0.8rem;
     background: var(--bs-warning-bg-subtle);

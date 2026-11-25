@@ -45,6 +45,10 @@ the paths is what lets the copied files stay plain copies.
     src/shared/app/hexplorerLive.ts                 the two types useHexplorer names, no live sessions
     src/stubs/vue-router.ts, src/stubs/unhead.ts    aliased in vite.config.ts
 
+`src/client/stores/playerLocalSettingsStore.ts` also keeps the survival game's settings and
+best scores. The game itself is this app's own, outside PlayHex's paths: `src/survival.ts`,
+`src/SurvivalGame.vue`, `src/SurvivalTab.vue`.
+
 ## Left out
 
 PlayHex's live sessions (streaming an analysis, analyzing together, matches from a position),
@@ -58,7 +62,9 @@ are.
 bar holds the live analysis button; analysis is on from the start; the sidebar starts closed
 on a phone, where it covers the board; the page takes the whole height, there being no PlayHex
 header; ctrl+S saves the analysis to a file; the sidebar footer credits the ui, the engine and
-the net and links the source, which is where the AGPL's source offer is reachable from.
+the net and links the source, which is where the AGPL's source offer is reachable from. A
+Survive tab opens the survival game over the board, suspending the board's searches while it
+is open, and can load the game played into the tree.
 
 `src/client/vue/hexplorer/composables/useHexplorer.ts`:
 
@@ -108,6 +114,11 @@ of the policy percentage, in a smaller font when it runs to two lines.
 `src/shared/app/hexplorer.ts`: `AnalysisOutput.moveInfos`, each visited candidate's winrate and
 visits, which `src/analysisStore.ts` keeps with the policy of the search they came from.
 
+`src/packages/pixi-board/GameView.ts`: `destroy` removes its view without releasing pixi's
+global resources. Releasing them empties the texture pool shared by every board on the page,
+so a second board (the survival game's) being destroyed broke the analysis board's next
+destroy, with a TypeError in `TexturePool.returnTexture`.
+
 `src/client/vue/hexplorer/components/HexplorerMoveTreePanel.vue`: no ctrl+click mention into a
 live session's chat.
 
@@ -122,7 +133,7 @@ names.
 rather than picked from PlayHex's Game model, which would drag in its whole model layer.
 
 `src/shared/app/en.json`: the AI tab and the help tab no longer say analysis is off by default
-or that a study can be shared.
+or that a study can be shared; `hexplorer.tab_survival` names the survival tab.
 
 ## Updating
 

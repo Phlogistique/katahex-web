@@ -4,6 +4,7 @@
  */
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
+import type { SurvivalSettings } from '../../survival.js';
 
 const LOCAL_SETTINGS_KEY = 'hex-local-settings';
 
@@ -16,6 +17,10 @@ export type LocalSettings = {
 
     /** Winrates as odds on the board, and the graph and the bar in log-odds. */
     hexplorerOddsScale?: boolean;
+
+    /** The survival game's settings, and its best score for each way of setting it. */
+    survival?: Partial<SurvivalSettings>;
+    survivalBest?: Record<string, number>;
 };
 
 const load = (): LocalSettings => {

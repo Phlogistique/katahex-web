@@ -32,6 +32,7 @@ export { default as IconGraphUp } from '~icons/bi/graph-up';
 export { default as IconHexagonFill } from '~icons/bi/hexagon-fill';
 export { default as IconMagic } from '~icons/bi/magic';
 export { default as IconStarFill } from '~icons/bi/star-fill';
+export { default as IconStopwatch } from '~icons/bi/stopwatch';
 export { default as IconPencilSquare } from '~icons/bi/pencil-square';
 export { default as IconPercent } from '~icons/bi/percent';
 export { default as IconPlayFill } from '~icons/bi/play-fill';

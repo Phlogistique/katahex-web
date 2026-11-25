@@ -1689,6 +1689,7 @@
         "study_nodes_one": "{{count}} node",
         "study_nodes_other": "{{count}} nodes",
         "study_discard_confirm": "You have unsaved changes, they will be lost. Continue?",
+        "tab_survival": "Survive",
         "tab_help": "Help",
         "help_what_title": "What is Hexplorer?",
         "help_what": "A free analysis board for Hex: explore any position, try several variations, and see what the AI thinks of them.",

@@ -392,6 +392,23 @@ file that is not in this repository:
     uv run --with numpy python scripts/export_net.py \
       path/to/hex27x3.bin.gz public-web/net
 
+### Survive KataHex
+
+The sidebar's Survive tab opens a game over the board (`ui/src/survival.ts` for the rules,
+`ui/src/SurvivalGame.vue` for the game). KataHex plays itself, red taking the move its
+rating search prefers and blue a random move whose network policy is between 5% and 30% of its
+best move's, for at least ten moves and until the rating search gives red at least 90%. The
+ten moves are there because without the swap red is winning from the start: KataHex rates the
+empty 11x11 board 99.8% for red at 32 visits, so 90% alone would hand over an empty board.
+Then red is the player's, with no swap, on a Fischer clock of 20 seconds plus 5 a move that increments never take past 25,
+and KataHex answers as blue with its own search. Each of the player's moves is rated before
+blue answers; the score is how many moves the player makes before red is rated under 10%.
+
+Every number there can be changed before a game, and the best score is kept for each
+combination of them, since a score only compares with games played the same way. The clock
+stops while KataHex is thinking. The analysis board's searches are suspended while the game is
+open, so its searches have the engine to themselves.
+
 ### Search speed, 11x11 on the Iris Xe laptop
 
 Sweeping in a reversed order -- 8, 16, 32, 32, 16, 8 -- with nothing else on the
