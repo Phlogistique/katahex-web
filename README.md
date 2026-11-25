@@ -453,8 +453,9 @@ clock stops while KataHex is thinking. The analysis board's searches are suspend
 game is open, so its searches have the engine to themselves.
 
 Take back, on unless turned off, takes back the player's last move and KataHex's answer, with
-the time and the score they had, during a turn or once a move has lost; best scores are kept
-apart for games with and without it.
+the score they had, during a turn or once a move has lost; best scores are kept apart for games
+with and without it. It gives no time back: the clock runs on, and a game lost on time stays
+lost. A clock that starts at 0 seconds is no clock at all.
 
 Again replays the same game: the position the last one was handed over at, the same side, a
 full clock; KataHex answers much as it did, so a line that lost can be tried another way. New

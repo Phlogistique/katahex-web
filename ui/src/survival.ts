@@ -62,7 +62,10 @@ export type SurvivalSettings = {
     /** The player may take back a move and KataHex's answer, even the one that lost. */
     takeBack: boolean;
 
-    /** Fischer clock, in seconds: the player starts with `initial`, gains `increment` a move, never past `cap` (0: no cap). */
+    /**
+     * Fischer clock, in seconds: the player starts with `initial` (0: no clock), gains
+     * `increment` a move, never past `cap` (0: no cap).
+     */
     initial: number;
     increment: number;
     cap: number;
@@ -110,7 +113,7 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
         startWinrate: number(merged.startWinrate, d.startWinrate, 0, 1),
         maxSelfPlayMoves: Math.round(number(merged.maxSelfPlayMoves, d.maxSelfPlayMoves, 0, 361)),
         loseWinrate: number(merged.loseWinrate, d.loseWinrate, 0, 1),
-        initial: number(merged.initial, d.initial, 1, 36000),
+        initial: number(merged.initial, d.initial, 0, 36000),
         increment: number(merged.increment, d.increment, 0, 36000),
         cap: number(merged.cap, d.cap, 0, 36000),
     };

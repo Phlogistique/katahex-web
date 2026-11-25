@@ -281,6 +281,7 @@ const resetGame = async (): Promise<number> => {
     turns.length = 0;
     canTakeBack.value = false;
     takeBackOn.value = settings.takeBack;
+    timed.value = settings.initial > 0;
     evalHistory.value = [];
     whiteWin.value = null;
     survived.value = 0;
@@ -435,9 +436,9 @@ const handOver = (): void => {
 
 /**
  * Where each of the player's turns started, to take a move back to: the moves on the board then,
- * what was rated, the score and the time left.
+ * what was rated and the score. Not the time: a take back gives none back, the clock runs on.
  */
-type Turn = { moves: number, whiteWin: number | null, evals: number, survived: number, clockMs: number };
+type Turn = { moves: number, whiteWin: number | null, evals: number, survived: number };
 
 const turns: Turn[] = [];
 
@@ -461,16 +462,22 @@ const canTakeBack = ref(false);
 /** The game's settings allow take backs; `settings` is not reactive either. */
 const takeBackOn = ref(false);
 
+/** The game is on a clock: a start of 0 seconds is none, all the time in the world. */
+const timed = ref(true);
+
+/** Out of time, and so out of the game: a take back would give no time back to play it with. */
+const flagged = (): boolean => timed.value && !!clock?.flagged();
+
 const syncTakeBack = (): void => {
     canTakeBack.value = settings.takeBack && (phase.value === 'player' || phase.value === 'over')
-        && handedOver.value && takeBackTarget() !== undefined;
+        && handedOver.value && !flagged() && takeBackTarget() !== undefined;
 };
 
-/** The player's last move and KataHex's answer back, with the time and the score they had. */
+/** The player's last move and KataHex's answer back, with the score they had; the clock runs on. */
 const takeBack = (): void => {
     const target = takeBackTarget();
 
-    if (!settings.takeBack || !target || !(phase.value === 'player' || phase.value === 'over')) {
+    if (!settings.takeBack || !target || flagged() || !(phase.value === 'player' || phase.value === 'over')) {
         return;
     }
 
@@ -489,8 +496,6 @@ const takeBack = (): void => {
     evalHistory.value = evalHistory.value.slice(0, target.evals);
     survived.value = target.survived;
     endReason.value = '';
-    clock = new FischerClock(target.clockMs / 1000, settings.increment, settings.cap);
-    clockMs.value = clock.left();
     yourTurn();
 };
 
@@ -500,12 +505,17 @@ const yourTurn = (): void => {
         whiteWin: whiteWin.value,
         evals: evalHistory.value.length,
         survived: survived.value,
-        clockMs: clock!.left(),
     });
     phase.value = 'player';
     status.value = `Your move, as ${colorName(you.value)}.`;
-    clock!.start();
     stopTicker();
+    syncTakeBack();
+
+    if (!timed.value) {
+        return;
+    }
+
+    clock!.start();
     ticker = setInterval(() => {
         clockMs.value = clock!.left();
 
@@ -513,7 +523,6 @@ const yourTurn = (): void => {
             finish('Out of time.');
         }
     }, 100);
-    syncTakeBack();
 };
 
 const onClick = async (move: string): Promise<void> => {
@@ -525,7 +534,7 @@ const onClick = async (move: string): Promise<void> => {
 
     stopTicker();
 
-    if (clock.flagged()) {
+    if (flagged()) {
         finish('Out of time.');
         return;
     }
@@ -644,7 +653,7 @@ onBeforeUnmount(() => {
 
 const playing = computed(() => phase.value === 'player' || phase.value === 'thinking');
 const lowTime = computed(() => playing.value && clockMs.value < 5000);
-const clockShown = computed(() => playing.value || (phase.value === 'over' && handedOver.value));
+const clockShown = computed(() => timed.value && (playing.value || (phase.value === 'over' && handedOver.value)));
 </script>
 
 <template>
@@ -732,7 +741,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                             </fieldset>
                             <fieldset>
                                 <legend>Clock, seconds</legend>
-                                <label>start <input v-model.number="form.initial" type="number" min="1" step="any" class="form-control form-control-sm"></label>
+                                <label>start (0: none) <input v-model.number="form.initial" type="number" min="0" step="any" class="form-control form-control-sm"></label>
                                 <label>+ a move <input v-model.number="form.increment" type="number" min="0" step="any" class="form-control form-control-sm"></label>
                                 <label>at most <input v-model.number="form.cap" type="number" min="0" step="any" class="form-control form-control-sm" title="0 for no cap"></label>
                             </fieldset>
@@ -760,7 +769,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                                 v-if="canTakeBack"
                                 type="button"
                                 class="btn btn-success take-back-btn"
-                                title="Your last move and KataHex's answer, and play on"
+                                title="Your last move and KataHex's answer, and play on; the clock gives no time back"
                                 @click="takeBack()"
                             >Take back</button>
                             <button
