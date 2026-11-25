@@ -1,3 +1,4 @@
+import { shallowRef } from 'vue';
 import { coordsToMove } from '@playhex/move-notation';
 import { improvedPolicy } from './improvedPolicy.js';
 import type { AnalysisInput, AnalysisOutput } from './shared/app/hexplorer.js';
@@ -25,8 +26,15 @@ declare global {
         onEngineLine?: (line: string) => void;
         onEngineLog?: (line: string) => void;
         onEngineProgress?: (line: string) => void;
+        onEngineBackend?: (backend: 'gpu' | 'cpu', detail: string) => void;
     }
 }
+
+/**
+ * What the net runs on, once the engine has said: the page's engine runs it on the CPU when
+ * WebGPU fails, many times slower. Null until then, and always on the phone's native engine.
+ */
+export const netBackend = shallowRef<{ backend: 'gpu' | 'cpu', detail: string } | null>(null);
 
 type Reply = {
     id: string;
@@ -125,6 +133,7 @@ class Engine {
         // The engine in the page spends about ten seconds downloading its net and
         // handing it to the GPU, and says nothing on its own until it is up.
         window.onEngineProgress = line => { if (!this.ready) this.onStatus(line, false); };
+        window.onEngineBackend = (backend, detail) => { netBackend.value = { backend, detail }; };
     }
 
     /**

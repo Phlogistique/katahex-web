@@ -19,6 +19,8 @@ type Host = {
   onEngineLog?: (line: string) => void;
   /** Only the wasm engine has this: the phone's takes no measurable time to start. */
   onEngineProgress?: (text: string) => void;
+  /** Whether the net runs on the GPU or, failing that, the CPU; only the wasm engine has a choice. */
+  onEngineBackend?: (backend: 'gpu' | 'cpu', detail: string) => void;
 };
 
 export type WasmEngineOptions = {
@@ -62,6 +64,11 @@ export type WasmEngineOptions = {
   leafEvals?: number;
   /** Time every GPU dispatch (slower; see webgpuModel.profile). */
   profile?: boolean;
+  /**
+   * Run the net on the CPU even if there is a GPU. Without one that works it
+   * runs there anyway, with the engine settings that suit it.
+   */
+  cpu?: boolean;
   onStats?: (stats: EvalStats) => void;
 };
 
@@ -79,6 +86,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
     serverThreads = 2,
     leafEvals = 64,
     profile = false,
+    cpu = false,
     onStats,
   } = options;
 
@@ -97,6 +105,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
         else if (data.kind === 'log') host.onEngineLog?.(data.line);
         else if (data.kind === 'progress') host.onEngineProgress?.(data.text);
         else if (data.kind === 'stats') onStats?.(data.stats);
+        else if (data.kind === 'backend') host.onEngineBackend?.(data.backend, data.detail);
         else host.onEngineLog?.(`engine error: ${data.message}`);
       };
       // The worker's file name hashes its code, so after a deploy that changed it, the next board
@@ -105,7 +114,7 @@ export function installWasmEngine(options: WasmEngineOptions = {}): void {
       worker.onerror = (event) => {
         if (!(event instanceof ErrorEvent)) host.onEngineLog?.('engine error: it failed to load, reloading the page may help');
       };
-      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, leafEvals, profile, enginePath, modelPath, shapePath });
+      send({ kind: 'start', boardSize, half, searchThreads, batchWaitMicros, serverThreads, leafEvals, profile, enginePath, modelPath, shapePath, cpu });
     },
 
     query(json) {

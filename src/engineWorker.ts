@@ -9,13 +9,15 @@
 // through, and the one that answers their net evaluations.
 
 import { parseKataGoModelV8 } from '../vendor/loadModelV8';
-import { serveEvals, type EvalStats } from './netRunner';
+import { serveEvals, type EvalStats, type NetEvaluator } from './netRunner';
 import { KataGoWebGpuModel } from './webgpuModel';
 
 export type ToEngine =
   | { kind: 'start'; boardSize: number; half: boolean; searchThreads: number;
       batchWaitMicros?: number; serverThreads?: number; leafEvals?: number; profile?: boolean;
-      enginePath: string; modelPath: string; shapePath?: string }
+      enginePath: string; modelPath: string; shapePath?: string;
+      /** Skip the GPU and run the net on the CPU, as when WebGPU fails. */
+      cpu?: boolean }
   | { kind: 'query'; json: string };
 
 export type FromEngine =
@@ -23,6 +25,7 @@ export type FromEngine =
   | { kind: 'log'; line: string }    // and on stderr: its own log
   | { kind: 'progress'; text: string }  // what it is doing in the ten seconds before that
   | { kind: 'stats'; stats: EvalStats }
+  | { kind: 'backend'; backend: 'gpu' | 'cpu'; detail: string }  // what the net runs on, once it does
   | { kind: 'error'; message: string };
 
 /** Lets the evaluation graph fill in while a position is searched. */
@@ -139,14 +142,8 @@ type EmscriptenModule = {
 let engine: EmscriptenModule | null = null;
 const queued: string[] = [];
 
-async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<void> {
-  // The newer knobs default here: this is a postMessage boundary, and a
-  // driver built against an older shape must keep working.
-  const { boardSize, half, searchThreads, batchWaitMicros = 3000, serverThreads = 2,
-          leafEvals = 1, profile = false, enginePath, modelPath, shapePath = modelPath } = options;
-
-  const say = (text: string) => post({ kind: 'progress', text });
-
+/** The GPU, ready to be given the net; throws whatever stops it being usable. */
+async function openGpu(half: boolean, profile: boolean, say: (text: string) => void) {
   say('looking for a GPU');
   // Firefox ships WebGPU on Linux, but off: there is nothing the page can do
   // about that except say which switch, because nobody guesses `about:config`.
@@ -168,6 +165,39 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   const adapter = await describeAdapter(gpu);
   if (half && !useHalf) say(`no shader-f16 on ${adapter}, running single precision`);
 
+  return { device, adapter, useHalf };
+}
+
+/**
+ * Engine settings for a net on the CPU. The GPU's are tuned to keep it in wide
+ * batches, sixty-four leaves in flight a thread; on a CPU a batch costs in
+ * proportion to its rows, and every leaf in flight past the first is an
+ * evaluation the search may never use.
+ */
+const CPU_SETTINGS = { searchThreads: 1, leafEvals: 2, serverThreads: 1, batchWaitMicros: 0 };
+
+async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<void> {
+  // The newer knobs default here: this is a postMessage boundary, and a
+  // driver built against an older shape must keep working.
+  const { boardSize, half, profile = false, enginePath, modelPath, shapePath = modelPath, cpu = false } = options;
+  let { searchThreads, batchWaitMicros = 3000, serverThreads = 2, leafEvals = 1 } = options;
+
+  const say = (text: string) => post({ kind: 'progress', text });
+
+  // Without a GPU that works, the net runs on the CPU rather than not at all:
+  // several times slower, but the same net, so the same moves.
+  let gpu: Awaited<ReturnType<typeof openGpu>> | null = null;
+  let whyCpu = 'asked for with ?cpu';
+  if (!cpu) {
+    try {
+      gpu = await openGpu(half, profile, say);
+    } catch (error) {
+      whyCpu = String((error as Error)?.message ?? error);
+      post({ kind: 'log', line: `no usable GPU (${whyCpu}): running the net on the CPU` });
+    }
+  }
+  if (!gpu) ({ searchThreads, leafEvals, serverThreads, batchWaitMicros } = CPU_SETTINGS);
+
   // A GPU process that goes down takes the device with it, and the page hears
   // about it as some later call failing on an object whose instance is gone --
   // "A valid external Instance reference no longer exists", which names a buffer
@@ -178,25 +208,28 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   // message carries how much had been asked for and how wide a batch was running
   // when it went. The banner truncates at 120 characters: keep it short, and
   // keep the fixed part first.
-  let model: KataGoWebGpuModel | null = null;
-  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-  const state = () => [
-    model ? `${(model.allocated.bytes / 2 ** 20).toFixed(0)} MB` : 'net not uploaded',
-    model?.lastBatch ? `batch ${model.lastBatch}` : null,
-    memory ? `${memory} GB RAM` : null,
-    adapter,
-  ].filter(Boolean).join(', ');
+  let gpuModel: KataGoWebGpuModel | null = null;
+  if (gpu) {
+    const { device, adapter } = gpu;
+    const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    const state = () => [
+      gpuModel ? `${(gpuModel.allocated.bytes / 2 ** 20).toFixed(0)} MB` : 'net not uploaded',
+      gpuModel?.lastBatch ? `batch ${gpuModel.lastBatch}` : null,
+      memory ? `${memory} GB RAM` : null,
+      adapter,
+    ].filter(Boolean).join(', ');
 
-  // Nothing is reported after this: the evaluations still in flight are about to
-  // fail as well, each naming whichever buffer it happened to touch.
-  void device.lost.then((lost) => {
-    fail(new Error(`GPU device lost (${state()}): ${lost.message}`));
-    silenced = true;
-  });
+    // Nothing is reported after this: the evaluations still in flight are about to
+    // fail as well, each naming whichever buffer it happened to touch.
+    void device.lost.then((lost) => {
+      fail(new Error(`GPU device lost (${state()}): ${lost.message}`));
+      silenced = true;
+    });
 
-  device.addEventListener('uncapturederror', (event) => {
-    fail(new Error(`GPU rejected the net (${state()}): ${(event as GPUUncapturedErrorEvent).error.message}`));
-  });
+    device.addEventListener('uncapturederror', (event) => {
+      fail(new Error(`GPU rejected the net (${state()}): ${(event as GPUUncapturedErrorEvent).error.message}`));
+    });
+  }
 
   // Two weight files, because the two readers want different things out of one
   // net: the engine only ever reads its name, version and channel counts -- this
@@ -232,9 +265,22 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
 
   say('reading the net');
   const parsed = parseKataGoModelV8(raw);
-  say('sending the net to the GPU');
-  model = new KataGoWebGpuModel(device, parsed, boardSize, useHalf);
-  model.profile = profile;
+
+  let model: NetEvaluator;
+  if (gpu) {
+    say('sending the net to the GPU');
+    gpuModel = new KataGoWebGpuModel(gpu.device, parsed, boardSize, gpu.useHalf);
+    gpuModel.profile = profile;
+    model = gpuModel;
+    post({ kind: 'backend', backend: 'gpu', detail: gpu.adapter });
+  } else {
+    say('no usable GPU: loading the net on the CPU, which is far slower');
+    // Fetched only now: a page with a GPU never downloads TensorFlow.js.
+    const { createCpuModel } = await import('./cpuModel');
+    const cpuModel = await createCpuModel(parsed, boardSize);
+    model = cpuModel;
+    post({ kind: 'backend', backend: 'cpu', detail: `${cpuModel.backend}, ${cpuModel.threads} threads; ${whyCpu}` });
+  }
 
   // Answer evaluations for as long as the worker lives; the engine is stopped
   // by dropping the whole worker. One loop per engine server thread, so one
@@ -242,8 +288,8 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   const stats: EvalStats = { evals: 0, rows: 0, nanos: 0 };
   const onEval = () => post({ kind: 'stats', stats: {
     ...stats,
-    stages: { ...model.stages },
-    kernels: profile ? [...model.gpuByLabel] : undefined,
+    stages: gpuModel ? { ...gpuModel.stages } : undefined,
+    kernels: profile && gpuModel ? [...gpuModel.gpuByLabel] : undefined,
   } });
   for (let idx = 0; idx < serverThreads; idx++) {
     void serveEvals(module.wasmMemory, module._katahexControlBlockAddress(idx), model, { stats, onEval })

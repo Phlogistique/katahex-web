@@ -51,8 +51,19 @@ export default defineConfig(({ mode }) => {
                 'vue-router': src('stubs/vue-router.ts'),
                 '@unhead/vue': src('stubs/unhead.ts'),
                 '@engine': `${katahexWeb}/src`,
+                // The CPU fallback's net (src/cpuModel.ts and the vendored graph, which
+                // asks for the whole of TensorFlow.js) gets only its core and the wasm
+                // backend, and from here: the engine's files sit outside this package,
+                // where there is no node_modules to find them in. An alias matches its
+                // name exactly or followed by a slash, so the first leaves the other two be.
+                '@tensorflow/tfjs': here('./node_modules/@tensorflow/tfjs-core'),
+                '@tensorflow/tfjs-core': here('./node_modules/@tensorflow/tfjs-core'),
+                '@tensorflow/tfjs-backend-wasm': here('./node_modules/@tensorflow/tfjs-backend-wasm'),
             },
         },
+        // Module workers, so that the engine's can load the CPU fallback on demand rather
+        // than every page carrying it.
+        worker: { format: 'es' as const },
         server: { headers, fs: { allow: ['.', katahexWeb] } },
         preview: { headers },
         build: {

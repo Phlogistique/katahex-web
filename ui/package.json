@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@overlastic/vue": "^0.8.10",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-core": "^4.22.0",
     "@vueuse/core": "^14.4.0",
     "bootstrap": "^5.3.3",
     "events": "^3.3.0",

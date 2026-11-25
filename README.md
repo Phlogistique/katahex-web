@@ -335,11 +335,35 @@ trusting the name.
 ### Browsers
 
 Chromium runs it. Firefox does too, but not as shipped: WebGPU is off by default
-on Linux and a page cannot ask for it, so the worker says which switch when
-`navigator.gpu` is missing rather than reporting a minified stack. Set
-`dom.webgpu.enabled` in `about:config` and Firefox 154 has `shader-f16` in a
-worker and runs the page end to end, at about half the throughput: 118 net
-positions a second against Chromium's 236, same machine and same search.
+on Linux and a page cannot ask for it, so the worker logs which switch when
+`navigator.gpu` is missing. Set `dom.webgpu.enabled` in `about:config` and
+Firefox 154 has `shader-f16` in a worker and runs the page end to end, at about
+half the throughput: 118 net positions a second against Chromium's 236, same
+machine and same search.
+
+### Without a GPU
+
+When WebGPU is missing or fails to give a device, the worker runs the net on the
+CPU instead (`src/cpuModel.ts`): the vendored TensorFlow.js graph on its
+WebAssembly backend, with SIMD and threads, all cores but one. Same net, same
+weights, so the same moves, only slower. `?cpu` forces it on a machine that has
+a GPU.
+
+Only TensorFlow.js's core and wasm backend are bundled, aliased in
+`ui/vite.config.ts`, and only into a chunk the worker imports when the GPU has
+failed, so a page with a GPU downloads none of it. That needs module workers,
+which is why the ui builds its workers as ES modules.
+
+The GPU's engine settings would waste a CPU: sixty-four leaves in flight a
+thread keep a GPU in wide batches, where on a CPU a batch costs in proportion to
+its rows and every leaf past the first may never be used. On the CPU the engine
+runs one search thread with two leaves in flight, and one serving thread.
+
+Measured in a headless Chromium with no GPU, four shared cores: ready 3 seconds
+after the page loads, about 4 net evaluations a second on 11x11, so 16 visits in
+4 seconds. The survival game at one visit is fully playable there on 14x14,
+KataHex answering a move in 0.3 to 0.4 seconds; its setup says the net is on the
+CPU and offers to set both searches to one visit.
 
 ### The two weight files
 

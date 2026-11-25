@@ -15,7 +15,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, useTemplateRef } f
 import { storeToRefs } from 'pinia';
 import { GameView, PlayingGameFacade } from '@playhex/pixi-board';
 import type { HexMove } from '@playhex/move-notation';
-import { engine, SearchAborted, type EngineAnalysis } from './engine.js';
+import { engine, netBackend, SearchAborted, type EngineAnalysis } from './engine.js';
 import { analysisStore } from './analysisStore.js';
 import usePlayerLocalSettingsStore from './client/stores/playerLocalSettingsStore.js';
 import { PlayerSettingsFacade } from './client/services/board-view-facades/PlayerSettingsFacade.js';
@@ -71,6 +71,14 @@ const form = reactive(toForm(sanitizeSettings(localSettings.value.survival)));
 
 /** The settings of the game being played, fixed when it starts. */
 let settings: SurvivalSettings = fromForm(form);
+
+/** On the CPU a search of a few hundred visits takes minutes; one visit is the net's own judgement. */
+const onCpu = computed(() => netBackend.value?.backend === 'cpu');
+
+const useOneVisit = (): void => {
+    form.opponentVisits = 1;
+    form.evalVisits = 1;
+};
 
 const resetForm = (): void => {
     Object.assign(form, toForm(sanitizeSettings({})));
@@ -471,6 +479,17 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                             Then red is yours, on a clock, and KataHex plays blue for real.
                             Make as many moves as you can before KataHex rates red under the line.
                         </p>
+                        <div v-if="onCpu" class="alert alert-warning small py-2 cpu-note">
+                            This device's GPU could not run KataHex, so the net runs on its CPU,
+                            many times slower. A search of a few hundred visits can take minutes;
+                            at one visit KataHex answers with its net alone, which already plays well.
+                            <button
+                                v-if="form.opponentVisits > 1 || form.evalVisits > 1"
+                                type="button"
+                                class="btn btn-sm btn-warning mt-1 d-block"
+                                @click="useOneVisit()"
+                            >Use 1 visit</button>
+                        </div>
                         <form class="settings" @submit.prevent="start()">
                             <label>Board size <input v-model.number="form.boardSize" type="number" min="3" max="19" class="form-control form-control-sm"></label>
                             <label>Blue's visits <input v-model.number="form.opponentVisits" type="number" min="1" class="form-control form-control-sm"></label>

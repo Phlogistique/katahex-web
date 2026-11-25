@@ -32,7 +32,12 @@
       "vue-router": ["./src/stubs/vue-router.ts"],
       "@unhead/vue": ["./src/stubs/unhead.ts"],
       // The engine bridge and the WebGPU net.
-      "@engine/*": ["../src/*"]
+      "@engine/*": ["../src/*"],
+      // What vite.config.ts aliases them to, for the CPU fallback's net.
+      "@tensorflow/tfjs": ["./node_modules/@tensorflow/tfjs-core"],
+      "@tensorflow/tfjs-core/*": ["./node_modules/@tensorflow/tfjs-core/*"],
+      "@tensorflow/tfjs-backend-wasm": ["./node_modules/@tensorflow/tfjs-backend-wasm"],
+      "@tensorflow/tfjs-backend-wasm/*": ["./node_modules/@tensorflow/tfjs-backend-wasm/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "src/**/*.d.ts", "vite.config.ts"],

@@ -10,7 +10,8 @@ import { noteNetStats } from './engineSpeed.js';
 // ?batchwait=N lets the net wait N microseconds for a partial batch to fill;
 // ?servers=N runs N serving threads, each with an evaluation in flight;
 // ?leaves=N lets each search thread keep N leaf evals in flight;
-// ?profile times every GPU dispatch into window.engineStats.kernels.
+// ?profile times every GPU dispatch into window.engineStats.kernels;
+// ?cpu runs the net on the CPU, as it does anyway when WebGPU fails.
 const options = new URLSearchParams(location.search);
 const numberOption = (name: string) => options.has(name) ? Number(options.get(name)) : undefined;
 
@@ -83,6 +84,7 @@ if (!crossOriginIsolated) {
         serverThreads: numberOption('servers'),
         leafEvals: numberOption('leaves'),
         profile: options.has('profile'),
+        cpu: options.has('cpu'),
         // Cumulative net counters: the sidebar's speed readout, and readable from
         // the console or a benchmark harness.
         onStats: (stats) => {
