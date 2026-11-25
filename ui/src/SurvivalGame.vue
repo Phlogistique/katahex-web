@@ -30,8 +30,10 @@ import {
     sanitizeSettings,
     settingsKey,
     SurvivalBoard,
+    SWAP,
     type SurvivalSettings,
 } from './survival.js';
+import { pickFairFirstMove, shouldSwap } from './shared/swap-maps/swapDecision.js';
 
 const emit = defineEmits<{
     close: [];
@@ -51,6 +53,7 @@ const toForm = (s: SurvivalSettings) => ({
     evalVisits: s.evalVisits,
     weakMin: Math.round(s.weakMin * 1000) / 10,
     weakMax: Math.round(s.weakMax * 1000) / 10,
+    swap: s.swap,
     minSelfPlayMoves: s.minSelfPlayMoves,
     startWinrate: Math.round(s.startWinrate * 1000) / 10,
     loseWinrate: Math.round(s.loseWinrate * 1000) / 10,
@@ -263,6 +266,27 @@ const fail = (gen: number, e: unknown): void => {
 };
 
 /**
+ * The opening of a game with the swap rule, from PlayHex's swap maps (computed with this same
+ * net): red opens on a fair cell, one KataHex rates near even, and blue swaps it or not at
+ * random, the likelier the stronger the move, as PlayHex's own AIs do.
+ */
+const openWithSwap = (): boolean => {
+    const first = pickFairFirstMove(board.size);
+
+    if (first === null) {
+        return false;
+    }
+
+    play(first);
+
+    if (shouldSwap(board.size, first)) {
+        play(SWAP);
+    }
+
+    return true;
+};
+
+/**
  * Red at its best against a blue playing middling moves, until red is clearly winning. Red's
  * search is the evaluation's: one search both rates the position and picks red's move.
  */
@@ -276,7 +300,24 @@ const selfPlay = async (gen: number): Promise<void> => {
             evalHistory.value = [];
         }
 
+        if (board.moves.length === 0 && settings.swap && openWithSwap()) {
+            continue;
+        }
+
         status.value = `KataHex plays itself, move ${board.moves.length + 1}…`;
+
+        // Blue's turn: after red's opening when blue kept it, and after each of red's moves.
+        if (board.toMove === 1) {
+            const policy = await ask(gen, 1);
+            const blue = pickMediocreMove(policy.prior, isEmpty, settings.weakMin, settings.weakMax);
+
+            if (blue === null) {
+                continue;
+            }
+
+            play(blue);
+            continue;
+        }
 
         const rated = await ask(gen, settings.evalVisits);
         const whiteWin = rated.whiteWin ?? 0.5;
@@ -290,17 +331,6 @@ const selfPlay = async (gen: number): Promise<void> => {
         }
 
         play(searchedMove(rated));
-
-        status.value = `KataHex plays itself, move ${board.moves.length + 1}…`;
-
-        const policy = await ask(gen, 1);
-        const blue = pickMediocreMove(policy.prior, isEmpty, settings.weakMin, settings.weakMax);
-
-        if (blue === null) {
-            continue;
-        }
-
-        play(blue);
     }
 };
 
@@ -475,7 +505,7 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                 <div class="card shadow">
                     <div class="card-body">
                         <p class="small">
-                            KataHex plays itself, red well and blue badly, until red is winning.
+                            KataHex plays itself from an even opening, red well and blue badly, until red is winning.
                             Then red is yours, on a clock, and KataHex plays blue for real.
                             Make as many moves as you can before KataHex rates red under the line.
                         </p>
@@ -499,6 +529,14 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
                                 <label>from <input v-model.number="form.weakMin" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
                                 <label>to <input v-model.number="form.weakMax" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>
                             </fieldset>
+                            <div class="form-check">
+                                <input id="survival-swap" v-model="form.swap" type="checkbox" class="form-check-input">
+                                <label for="survival-swap" class="form-check-label">
+                                    Open with the swap: a fair first move from
+                                    <a href="https://playhex.org/swap-maps" target="_blank" rel="noopener">PlayHex's swap maps</a>,
+                                    which blue may take
+                                </label>
+                            </div>
                             <fieldset>
                                 <legend>You take over red after</legend>
                                 <label>at least this many moves <input v-model.number="form.minSelfPlayMoves" type="number" min="0" class="form-control form-control-sm"></label>
@@ -652,6 +690,13 @@ const clockShown = computed(() => playing.value || (phase.value === 'over' && ha
         flex-direction column
         font-size 0.8rem
         flex 1 1 7rem
+
+    .form-check
+        width 100%
+        font-size 0.8rem
+
+        label
+            display inline
 
     fieldset
         display flex

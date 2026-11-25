@@ -23,7 +23,8 @@ const best = computed(() => localSettings.value.survivalBest?.[settingsKey(sanit
     <div>
         <h2>Survive KataHex</h2>
         <p>
-            KataHex plays itself, red well and blue badly, until red is winning comfortably.
+            KataHex plays itself from an even opening, a first move from PlayHex's swap maps that
+            blue may swap, red well and blue badly, until red is winning comfortably.
             Then you take red, on a short clock, and KataHex plays blue for real.
         </p>
         <p>

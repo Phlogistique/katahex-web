@@ -419,14 +419,21 @@ file that is not in this repository:
 ### Survive KataHex
 
 The sidebar's Survive tab opens a game over the board (`ui/src/survival.ts` for the rules,
-`ui/src/SurvivalGame.vue` for the game). KataHex plays itself, red taking the move its
-rating search prefers and blue a random move whose network policy is between 5% and 30% of its
-best move's, for at least ten moves and until the rating search gives red at least 90%. The
-ten moves are there because without the swap red is winning from the start: KataHex rates the
-empty 11x11 board 99.8% for red at 32 visits, so 90% alone would hand over an empty board.
-Then red is the player's, with no swap, on a Fischer clock of 20 seconds plus 5 a move that increments never take past 25,
-and KataHex answers as blue with its own search. Each of the player's moves is rated before
-blue answers; the score is how many moves the player makes before red is rated under 10%.
+`ui/src/SurvivalGame.vue` for the game). It opens as a game with the swap rule does, from
+PlayHex's swap maps (`ui/src/shared/swap-maps`, computed with this same net at 1000 playouts a
+cell): red plays a fair first move, likelier the closer KataHex rates it to even, and blue
+swaps it or not at random, likelier the stronger it is, as PlayHex's own AIs do. Then KataHex
+plays itself, red taking the move its rating search prefers and blue a random move whose
+network policy is between 5% and 30% of its best move's, until the rating search gives red at
+least 90%. Then red is the player's, on a Fischer clock of 20 seconds plus 5 a move that
+increments never take past 25, and KataHex answers as blue with its own search. Each of the
+player's moves is rated before blue answers; the score is how many moves the player makes
+before red is rated under 10%.
+
+The swap can be turned off. Without it red is winning from the start, KataHex rating the
+empty board 99.8% for red on 11x11 and 99.6% on 14x14, so a minimum number of self-play moves
+can also be set, for a game to start somewhere other than an empty board. From a fair opening,
+self-play reaches 90% in about twenty moves on 14x14.
 
 It is played on 14x14 by default: on 11x11 the winrates saturate so fast that there is
 hardly a game. Every number there can be changed before a game, and the best score is kept

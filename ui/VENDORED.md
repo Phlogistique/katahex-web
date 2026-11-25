@@ -31,6 +31,8 @@ alias to `src/packages`.
     src/client/vue/components/AppResizableSidebar.vue, AppSidebarNav.vue,
       AppConditionalMoveButton.vue, overlay/ImportGameOverlay.vue
     src/client/vue/hexplorer                       (except what is listed below)
+    src/shared/swap-maps/swap-maps.ts,             the survival game's opening, from PlayHex
+      swapDecision.ts                              65802e6 (2026-11-25), newer than the rest
 
 ## Written here, at PlayHex's own module paths
 

@@ -1,8 +1,9 @@
 /*
  * Survival: how long can you hold a won game against KataHex?
  *
- * KataHex plays itself, red well and blue badly, for at least `minSelfPlayMoves` moves and
- * until it rates red's position at least `startWinrate`. Then the player takes red and KataHex plays blue properly, and the score is how
+ * KataHex plays itself from a fair opening and blue's swap decision, both from PlayHex's swap
+ * maps, red well and blue badly, for at least `minSelfPlayMoves` moves and until it rates red's
+ * position at least `startWinrate`. Then the player takes red and KataHex plays blue properly, and the score is how
  * many moves the player makes before KataHex rates red under `loseWinrate`. No swap: red always
  * moves first.
  *
@@ -11,7 +12,7 @@
  *
  * Written for this app; not part of PlayHex.
  */
-import { coordsToMove, parseMove, validateMove } from '@playhex/move-notation';
+import { coordsToMove, mirrorMove, parseMove, validateMove } from '@playhex/move-notation';
 
 export type SurvivalSettings = {
     boardSize: number;
@@ -34,10 +35,13 @@ export type SurvivalSettings = {
     weakMax: number;
 
     /**
-     * Self-play hands red over once it has played at least `minSelfPlayMoves` moves and red is
-     * rated at least `startWinrate`. Without the swap red is winning on the empty board already,
-     * KataHex rating it 99.8% on 11x11, so the moves are what makes a game start somewhere.
+     * Self-play opens with a fair first move, which blue may swap, as a game with the swap rule
+     * does. Without it red is winning on the empty board already, KataHex rating it 99.8% on
+     * 11x11 and 99.6% on 14x14, and a game starts only once `minSelfPlayMoves` are played.
      */
+    swap: boolean;
+
+    /** Self-play hands red over once it has played at least this many moves and red is rated at least `startWinrate`. */
     minSelfPlayMoves: number;
     startWinrate: number;
 
@@ -57,7 +61,8 @@ export const DEFAULT_SURVIVAL_SETTINGS: SurvivalSettings = {
     evalVisits: 200,
     weakMin: 0.05,
     weakMax: 0.3,
-    minSelfPlayMoves: 10,
+    swap: true,
+    minSelfPlayMoves: 0,
     startWinrate: 0.9,
     loseWinrate: 0.1,
     initial: 20,
@@ -83,6 +88,7 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
         evalVisits: Math.round(number(merged.evalVisits, d.evalVisits, 1, 100000)),
         weakMin,
         weakMax: number(merged.weakMax, d.weakMax, weakMin, 1),
+        swap: typeof merged.swap === 'boolean' ? merged.swap : d.swap,
         minSelfPlayMoves: Math.round(number(merged.minSelfPlayMoves, d.minSelfPlayMoves, 0, 361)),
         startWinrate: number(merged.startWinrate, d.startWinrate, 0, 1),
         loseWinrate: number(merged.loseWinrate, d.loseWinrate, 0, 1),
@@ -95,14 +101,18 @@ export const sanitizeSettings = (stored: Partial<SurvivalSettings> | undefined):
 /** What a best score is filed under: a score only compares with games played the same way. */
 export const settingsKey = (s: SurvivalSettings): string => [
     s.boardSize, s.opponentVisits, s.evalVisits, s.weakMin, s.weakMax,
-    s.minSelfPlayMoves, s.startWinrate, s.loseWinrate, s.initial, s.increment, s.cap,
+    s.swap ? 'swap' : 'noswap', s.minSelfPlayMoves, s.startWinrate, s.loseWinrate, s.initial, s.increment, s.cap,
 ].join('/');
 
 export type Stone = 0 | 1;
 
+/** PlayHex's name for the second move that takes the first: its stone, mirrored, becomes blue's. */
+export const SWAP = 'swap-pieces';
+
 /**
  * A board as the game plays it: red (0) joins top to bottom, blue (1) left to right, and a cell
- * is named as the engine and the board view name it, column letter then row number.
+ * is named as the engine and the board view name it, column letter then row number. The second
+ * move may be the swap.
  */
 export class SurvivalBoard
 {
@@ -125,6 +135,11 @@ export class SurvivalBoard
     }
 
     play(move: string): void {
+        if (move === SWAP) {
+            this.swap();
+            return;
+        }
+
         const cell = this.parse(move);
 
         if (cell === null || this.cells[cell.row][cell.col] !== null) {
@@ -135,13 +150,40 @@ export class SurvivalBoard
         this.moves.push(move);
     }
 
+    /**
+     * Blue takes red's first move: the stone goes over to the cell mirrored through the long
+     * diagonal, as blue's, and it is red's turn again, as in PlayHex.
+     */
+    private swap(): void {
+        const first = this.moves[0];
+
+        if (this.moves.length !== 1 || first === undefined) {
+            throw new Error('the swap can only be the second move');
+        }
+
+        const from = this.parse(first)!;
+        const to = this.parse(mirrorMove(first as Parameters<typeof mirrorMove>[0]))!;
+
+        this.cells[from.row][from.col] = null;
+        this.cells[to.row][to.col] = 1;
+        this.moves.push(SWAP);
+    }
+
     /** The stones of one colour, in the engine's notation. */
     stones(player: Stone): string[] {
-        return this.moves.filter((_, index) => index % 2 === player);
+        const stones: string[] = [];
+
+        this.cells.forEach((line, row) => line.forEach((cell, col) => {
+            if (cell === player) {
+                stones.push(coordsToMove({ row, col }));
+            }
+        }));
+
+        return stones;
     }
 
     full(): boolean {
-        return this.moves.length >= this.size * this.size;
+        return this.cells.every(line => line.every(cell => cell !== null));
     }
 
     /** Who has joined their two sides, if anyone. */
