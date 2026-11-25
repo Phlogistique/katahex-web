@@ -1108,7 +1108,9 @@ export default class GameView extends TypedEmitter<GameViewEvents>
 
         this.destroyResizeObserver(); // Must disconnect resize observer before destroying pixi app, the observed element
 
-        this.pixi.destroy(true);
+        // Patched here: `true` also releases pixi's global resources, emptying the texture
+        // pool every other live board still returns its textures to.
+        this.pixi.destroy({ removeView: true });
 
         this.emit('destroyAfter');
     }
