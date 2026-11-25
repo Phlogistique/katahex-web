@@ -22,12 +22,15 @@ export type SurvivalSettings = {
 
     color: SurvivalColor;
 
-    /** Visits of the search KataHex answers the player with. */
+    /**
+     * Visits of the search KataHex answers the player with, which also rates the position after
+     * its answer: the winrate of the move it chose.
+     */
     opponentVisits: number;
 
     /**
-     * Visits of the search that rates the player's side after each of KataHex's answers, and
-     * that picks that side's moves while KataHex plays itself.
+     * Visits of the search that, while KataHex plays itself, picks the player's side's moves and
+     * rates that side for handing it over.
      */
     evalVisits: number;
 

@@ -555,9 +555,13 @@ const onClick = async (move: string): Promise<void> => {
     status.value = 'KataHex answers…';
 
     try {
-        // KataHex answers first, and what is rated is the position after its answer, the one
-        // the player would move in: losing, they see the move that did it.
+        // KataHex answers, and what is rated is the position after its answer, the one the
+        // player would move in: losing, they see the move that did it. Its own search rates it,
+        // as the move it chose; at one visit no move has been searched, and the position it
+        // answered stands in for it.
         const reply = await ask(gen, settings.opponentVisits);
+        const chosen = bestChild(reply.children, isEmpty);
+        const rating = chosen && chosen.visits > 0 ? chosen.whiteWin : reply.whiteWin;
 
         play(searchedMove(reply));
 
@@ -566,11 +570,7 @@ const onClick = async (move: string): Promise<void> => {
             return;
         }
 
-        status.value = 'KataHex rates the position…';
-
-        const rated = await ask(gen, settings.evalVisits);
-
-        whiteWin.value = rated.whiteWin ?? 0.5;
+        whiteWin.value = rating ?? 0.5;
         evalHistory.value = [...evalHistory.value, whiteWin.value];
 
         if (yourWin.value! < settings.loseWinrate) {
@@ -709,7 +709,7 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
                                 <option value="blue">blue</option>
                             </select></label>
                             <label>KataHex's visits <input v-model.number="form.opponentVisits" type="number" min="1" class="form-control form-control-sm"></label>
-                            <label>Rating visits <input v-model.number="form.evalVisits" type="number" min="1" class="form-control form-control-sm"></label>
+                            <label>Self-play visits <input v-model.number="form.evalVisits" type="number" min="1" class="form-control form-control-sm"></label>
                             <fieldset>
                                 <legend>Your opponent's self-play moves, as % of its best move's policy</legend>
                                 <label>from <input v-model.number="form.weakMin" type="number" min="0" max="100" step="any" class="form-control form-control-sm"></label>

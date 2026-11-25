@@ -424,13 +424,14 @@ PlayHex's swap maps (`ui/src/shared/swap-maps`, computed with this same net at 1
 cell): red plays a fair first move, likelier the closer KataHex rates it to even, and blue
 swaps it or not at random, likelier the stronger it is, as PlayHex's own AIs do. Either side
 is then fair to take, and the player's is drawn at random unless chosen. KataHex plays itself,
-the player's side taking the move its rating search prefers and the other a random move whose
-network policy is between 5% and 30% of its best move's, until the rating search gives the
+the player's side taking the move its own search prefers and the other a random move whose
+network policy is between 5% and 30% of its best move's, until that search gives the
 player's side at least 90%, or for 20 moves at most, after which the player takes over
 wherever it got; if the game ends first, it stops there and says to change the settings. Then that side is the player's, on a Fischer clock of 20 seconds
 plus 5 a move that increments never take past 25, and KataHex answers with its own search.
 After each of the player's moves KataHex answers, and the position after its answer is rated,
-so a game that is lost ends on the move that won it for KataHex; the score is how many moves
+by that same search, as the winrate of the move it chose: one search a move. A game that is
+lost so ends on the move that won it for KataHex; the score is how many moves
 the player makes before their side is rated under 10%.
 
 The swap can be turned off. Without it red is winning from the start, KataHex rating the
@@ -466,7 +467,8 @@ A finished game can be loaded into the analysis board, to see where it was lost,
 asked to confirm: the tree it replaces is most often the last game's. Every search
 the game ran goes into the board's analysis store, so the evaluation graph draws the positions
 the game already rated without searching them again, wherever the game's search was as deep
-as the board's analyzer asks for (200 visits by default, as are the game's ratings).
+as the board's analyzer asks for: 200 visits by default, as are self-play's searches, where
+KataHex's answers, at 100, are searched again.
 
 ### Search speed, 11x11 on the Iris Xe laptop
 
