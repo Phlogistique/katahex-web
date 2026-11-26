@@ -169,6 +169,57 @@ async function openGpu(half: boolean, profile: boolean, say: (text: string) => v
 }
 
 /**
+ * Runs the net once on an empty board before the engine is given it, and throws
+ * if the GPU will not: a browser can hand out a device that then fails on the
+ * net's shaders or buffers -- Firefox, whose WebGPU is newer than the kernels'
+ * testing, is the one to expect it from. Past this point a failure is fatal, so
+ * this is where it can still fall back to the CPU.
+ *
+ * Inside error scopes, so what goes wrong is thrown here rather than raised as an
+ * uncaptured error that ends the page; uploading the weights goes in them too.
+ */
+async function tryGpuModel(device: GPUDevice, parsed: ReturnType<typeof parseKataGoModelV8>,
+                           boardSize: number, half: boolean): Promise<KataGoWebGpuModel> {
+  const scopes = ['out-of-memory', 'internal', 'validation'] as const;
+  for (const scope of scopes) device.pushErrorScope(scope);
+
+  let model: KataGoWebGpuModel | null = null;
+  let thrown: unknown = null;
+  let out: Awaited<ReturnType<KataGoWebGpuModel['evaluate']>> | null = null;
+  try {
+    model = new KataGoWebGpuModel(device, parsed, boardSize, half);
+    // Channel 0 is the on-board mask; the rest of an empty board is zeros.
+    const area = boardSize * boardSize;
+    const spatial = new Float32Array(area * parsed.numInputChannels);
+    for (let i = 0; i < area; i++) spatial[i * parsed.numInputChannels] = 1;
+    out = await model.evaluate(spatial, new Float32Array(parsed.numInputGlobalChannels), 1);
+  } catch (error) {
+    thrown = error;
+  }
+
+  // Popped whatever happened, innermost first, so the scopes never outlive the trial.
+  const errors: (GPUError | null)[] = [];
+  for (let i = 0; i < scopes.length; i++) errors.push(await device.popErrorScope());
+  const reported = errors.find(Boolean);
+
+  const finite = (values: Float32Array | undefined) => !!values && values.every(Number.isFinite);
+  let problem: string | null = null;
+  if (reported) problem = reported.message;
+  else if (thrown) problem = String((thrown as Error)?.message ?? thrown);
+  else if (!out || ![out.policy[0], out.policyPass, out.value[0], out.scoreValue[0]].every(finite)) {
+    problem = 'it gave numbers that are not finite';
+  }
+
+  if (problem !== null) {
+    model?.dispose();
+    // A shader's error goes on to quote the source with a caret under it; the
+    // banner has room for the first line only.
+    throw new Error(`WebGPU could not run the net: ${problem.split('\n')[0]}`);
+  }
+  return model!;
+}
+
+/**
  * Engine settings for a net on the CPU. The GPU's are tuned to keep it in wide
  * batches, sixty-four leaves in flight a thread; on a CPU a batch costs in
  * proportion to its rows, and every leaf in flight past the first is an
@@ -196,7 +247,6 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
       post({ kind: 'log', line: `no usable GPU (${whyCpu}): running the net on the CPU` });
     }
   }
-  if (!gpu) ({ searchThreads, leafEvals, serverThreads, batchWaitMicros } = CPU_SETTINGS);
 
   // A GPU process that goes down takes the device with it, and the page hears
   // about it as some later call failing on an object whose instance is gone --
@@ -222,6 +272,8 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
     // Nothing is reported after this: the evaluations still in flight are about to
     // fail as well, each naming whichever buffer it happened to touch.
     void device.lost.then((lost) => {
+      // Destroyed by us, when the trial run failed and the net went to the CPU.
+      if (lost.reason === 'destroyed') return;
       fail(new Error(`GPU device lost (${state()}): ${lost.message}`));
       silenced = true;
     });
@@ -260,20 +312,28 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
     printErr: (line: string) => post({ kind: 'log', line }),
   });
 
-  module.FS.writeFile('/model.bin', shape);
-  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros, serverThreads, leafEvals));
-
   say('reading the net');
   const parsed = parseKataGoModelV8(raw);
 
-  let model: NetEvaluator;
   if (gpu) {
     say('sending the net to the GPU');
-    gpuModel = new KataGoWebGpuModel(gpu.device, parsed, boardSize, gpu.useHalf);
+    try {
+      gpuModel = await tryGpuModel(gpu.device, parsed, boardSize, gpu.useHalf);
+    } catch (error) {
+      whyCpu = String((error as Error)?.message ?? error);
+      post({ kind: 'log', line: `${whyCpu}: running the net on the CPU` });
+      gpu.device.destroy();
+      gpu = null;
+    }
+  }
+
+  let model: NetEvaluator;
+  if (gpu && gpuModel) {
     gpuModel.profile = profile;
     model = gpuModel;
     post({ kind: 'backend', backend: 'gpu', detail: gpu.adapter });
   } else {
+    ({ searchThreads, leafEvals, serverThreads, batchWaitMicros } = CPU_SETTINGS);
     say('no usable GPU: loading the net on the CPU, which is far slower');
     // Fetched only now: a page with a GPU never downloads TensorFlow.js.
     const { createCpuModel } = await import('./cpuModel');
@@ -281,6 +341,10 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
     model = cpuModel;
     post({ kind: 'backend', backend: 'cpu', detail: `${cpuModel.backend}, ${cpuModel.threads} threads; ${whyCpu}` });
   }
+
+  // Written only now: the engine's threads and batches depend on where the net runs.
+  module.FS.writeFile('/model.bin', shape);
+  module.FS.writeFile('/analysis.cfg', config(boardSize, searchThreads, batchWaitMicros, serverThreads, leafEvals));
 
   // Answer evaluations for as long as the worker lives; the engine is stopped
   // by dropping the whole worker. One loop per engine server thread, so one

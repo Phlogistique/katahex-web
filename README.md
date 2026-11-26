@@ -349,6 +349,14 @@ WebAssembly backend, with SIMD and threads, all cores but one. Same net, same
 weights, so the same moves, only slower. `?cpu` forces it on a machine that has
 a GPU.
 
+A device is not yet a GPU that runs the net: a browser can hand one out and then
+reject the shaders or the buffers, and once the engine is running that is fatal.
+So the worker first evaluates an empty board inside WebGPU error scopes, and
+anything it throws, reports or returns that is not finite sends the net to the CPU
+as if there had been no GPU. Tested by feeding the trial a broken shader on
+Chromium's SwiftShader adapter: it logs the WGSL error's first line and the engine
+comes up on the CPU.
+
 Only TensorFlow.js's core and wasm backend are bundled, aliased in
 `ui/vite.config.ts`, and only into a chunk the worker imports when the GPU has
 failed, so a page with a GPU downloads none of it. That needs module workers,
@@ -364,6 +372,15 @@ after the page loads, about 4 net evaluations a second on 11x11, so 16 visits in
 4 seconds. The survival game at one visit is fully playable there on 14x14,
 KataHex answering a move in 0.3 to 0.4 seconds; its setup says the net is on the
 CPU and offers to set both searches to one visit.
+
+Firefox 153 (Playwright's build, headless, the same four cores) runs the page on
+the CPU end to end -- the service worker's reload, the engine's pthreads, the
+TensorFlow.js chunk in the module worker -- but about eight times slower: 2 to 3
+seconds a net evaluation, against Chromium's 0.3. That is Firefox's WebAssembly,
+not this page: TensorFlow.js alone, twenty 384-channel 3x3 convolutions on
+11x11, single-threaded, does 25 GFLOP/s in Chromium and 2.3 in Firefox (4.3 on
+three threads), and 0.5 with SIMD off. The survival game at one visit still
+plays: self-play on 7x7 hands over in 12 seconds.
 
 ### The two weight files
 
