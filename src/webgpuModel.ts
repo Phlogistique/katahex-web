@@ -26,6 +26,8 @@ import type {
 import type { ParsedKataGoModelV8, ParsedTrunkBlock } from '../vendor/modelV8';
 
 const TILE = 64;
+/** Distinct `dim` values a plan has room for. */
+const MAX_DIMS = 32;
 
 const roundUp = (v: number, m: number) => Math.ceil(v / m) * m;
 /** Channels pad to the narrowest k tile any matmul pipeline stages. */
@@ -89,6 +91,13 @@ type WeightType = 'f16' | 'f32' | 'u32';
  */
 export type MatmulTile = { wgX: number; wgY: number; rows: number; cols4: number; tileK: number };
 
+/**
+ * The one number of a pass that depends on the batch, as a uniform rather than
+ * a constant in the code: every batch size then shares one set of pipelines.
+ */
+const dimBinding = (binding: number) =>
+  `@group(0) @binding(${binding}) var<uniform> dim : vec4<u32>;`;
+
 /** 64 rows x 64 columns per workgroup, 4x4 outputs per thread. */
 const WIDE: Omit<MatmulTile, 'tileK'> = { wgX: 16, wgY: 16, rows: 4, cols4: 1 };
 /** Half the rows, for an m that a 64-row tile would pad heavily. */
@@ -105,7 +114,7 @@ export function matmulTile(m: number, n: number, k: number): MatmulTile {
 
 /**
  * Tiled matmul, C[m,n] = A[m,k] B[k,n], batched over workgroup z when
- * dispatched with depth > 1 (the Winograd tile positions). Everything moves in
+ * dispatched with depth > 1 (the Winograd tile positions). m is `dim.x`. Everything moves in
  * vec4: four columns of B and four steps of the reduction of A per load, so the
  * inner loop issues a quarter of the shared-memory reads a scalar one would.
  * m must be a multiple of the tile's row count and k of its k tile; n only has
@@ -161,6 +170,7 @@ export function matmulShader(t: string, wt: WeightType, m: number, n: number, k:
 @group(0) @binding(0) var<storage, read> a : array<${v4}>;
 @group(0) @binding(1) var<storage, read> b : ${bStore};
 @group(0) @binding(2) var<storage, read_write> c : array<${v4}>;
+${dimBinding(3)}
 var<workgroup> aTile : array<${v4}, ${aCount}>;
 var<workgroup> bTile : array<${v4}, ${bCount}>;
 
@@ -170,10 +180,10 @@ fn bLoad(i : u32) -> ${v4} { ${bLoad} }
 fn main(@builtin(local_invocation_id) lid : vec3<u32>,
         @builtin(workgroup_id) wid : vec3<u32>) {
   let tid = lid.y * ${wgX}u + lid.x;
-  let aOff = wid.z * ${m * k4}u + wid.y * ${tileM * k4}u;
+  let aOff = wid.z * dim.x * ${k4}u + wid.y * ${tileM * k4}u;
   let bOff = wid.z * ${k * n4}u + wid.x * ${nq}u;
   let colq = wid.x * ${nq}u + lid.x * ${cols4}u;
-  let cOff = wid.z * ${m * n4}u + (wid.y * ${tileM}u + lid.y * ${rows}u) * ${n4}u + colq;
+  let cOff = wid.z * dim.x * ${n4}u + (wid.y * ${tileM}u + lid.y * ${rows}u) * ${n4}u + colq;
   let aRead = lid.y * ${rows * kq}u;
   let bRead = lid.x * ${cols4}u;
 ${list(rows, (i) => list(cols4, (p) => `  var ${acc(i, p)} = ${v4}();`).join('')).join('\n')}
@@ -196,20 +206,18 @@ ${list(rows, (i) => list(cols4, (p) => n % TILE === 0
  * f32 whatever the storage: the transform coefficients stretch fp16 badly and
  * both kernels are memory-bound anyway.
  */
-function winogradPrelude(t: string, board: number, batch: number, mPad: number,
-                         cin: number, cout: number): string {
+function winogradPrelude(t: string, board: number, cin: number, cout: number): string {
   const tiles = Math.ceil(board / 4);
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 const B = ${board}; const TX = ${tiles}u;
-const MREAL = ${batch * tiles * tiles}u; const MPAD = ${mPad}u;
 const CIN = ${cin}u; const COUT = ${cout}u;
+${dimBinding(2)}
 `;
 }
 
-/** B^T d B per 6x6 input tile: [rows, cinPad] NHWC to the matmul's [36][mPad][cinPad]. */
-function winogradTransformShader(t: string, board: number, batch: number,
-                                 cinPad: number, mPad: number): string {
-  return winogradPrelude(t, board, batch, mPad, cinPad, 0) + `
+/** B^T d B per 6x6 input tile: [rows, cinPad] NHWC to the matmul's [36][mPad][cinPad], mPad `dim.x`. */
+function winogradTransformShader(t: string, board: number, cinPad: number): string {
+  return winogradPrelude(t, board, cinPad, 0) + `
 @group(0) @binding(0) var<storage, read> src : array<${t}>;
 @group(0) @binding(1) var<storage, read_write> dst : array<${t}>;
 
@@ -219,6 +227,7 @@ fn transform(@builtin(global_invocation_id) gid : vec3<u32>) {
   // so the 36 loads and stores each cover whole cache lines per workgroup.
   let ic = gid.x;
   let m = gid.y;
+  let MPAD = dim.x;
   if (ic >= CIN) { return; }
   let img = m / (TX * TX);
   let ty = (m / TX) % TX;
@@ -265,9 +274,8 @@ fn transform(@builtin(global_invocation_id) gid : vec3<u32>) {
 }
 
 /** A^T m A per output tile, back to [rows, coutPad] NHWC. */
-function winogradUntransformShader(t: string, board: number, batch: number,
-                                   coutPad: number, mPad: number): string {
-  return winogradPrelude(t, board, batch, mPad, 0, coutPad) + `
+function winogradUntransformShader(t: string, board: number, coutPad: number): string {
+  return winogradPrelude(t, board, 0, coutPad) + `
 @group(0) @binding(0) var<storage, read> src : array<${t}>;
 @group(0) @binding(1) var<storage, read_write> dst : array<${t}>;
 
@@ -275,6 +283,7 @@ function winogradUntransformShader(t: string, board: number, batch: number,
 fn untransform(@builtin(global_invocation_id) gid : vec3<u32>) {
   let oc = gid.x;
   let m = gid.y;
+  let MPAD = dim.x;
   if (oc >= COUT) { return; }
   let img = m / (TX * TX);
   let ty = (m / TX) % TX;
@@ -321,17 +330,18 @@ const ACT_WGSL: Record<ActivationKind, string> = {
   mish: 'let sp = select(log(1.0 + exp(v)), v, v > 20.0); let y = v * tanh(sp);',
 };
 
-/** y = act(x * scale[c] + bias[c]) over a whole [rows, cpad] buffer, math in f32. */
-function bnActShader(t: string, elems: number, cpad: number, act: ActivationKind): string {
+/** y = act(x * scale[c] + bias[c]) over the first `dim.x` elements of a [rows, cpad] buffer, math in f32. */
+function bnActShader(t: string, cpad: number, act: ActivationKind): string {
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 @group(0) @binding(0) var<storage, read> x : array<${t}>;
 @group(0) @binding(1) var<storage, read> scale : array<f32>;
 @group(0) @binding(2) var<storage, read> bias : array<f32>;
 @group(0) @binding(3) var<storage, read_write> out : array<${t}>;
+${dimBinding(4)}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
-  if (i >= ${elems}u) { return; }
+  if (i >= dim.x) { return; }
   let c = i % ${cpad}u;
   let v = f32(x[i]) * scale[c] + bias[c];
   ${ACT_WGSL[act]}
@@ -339,30 +349,32 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 }`;
 }
 
-/** out = a + b, elementwise. */
-function addShader(t: string, elems: number): string {
+/** out = a + b, elementwise over the first `dim.x` elements. */
+function addShader(t: string): string {
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 @group(0) @binding(0) var<storage, read> a : array<${t}>;
 @group(0) @binding(1) var<storage, read> b : array<${t}>;
 @group(0) @binding(2) var<storage, read_write> out : array<${t}>;
+${dimBinding(3)}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
-  if (i >= ${elems}u) { return; }
+  if (i >= dim.x) { return; }
   out[i] = a[i] + b[i];
 }`;
 }
 
-/** out = x + bias[image, c]: a per-image channel bias broadcast over positions. */
-function addBiasShader(t: string, batch: number, hw: number, cpad: number): string {
+/** out = x + bias[image, c]: a per-image channel bias broadcast over positions, `dim.x` elements. */
+function addBiasShader(t: string, hw: number, cpad: number): string {
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 @group(0) @binding(0) var<storage, read> x : array<${t}>;
 @group(0) @binding(1) var<storage, read> bias : array<${t}>;
 @group(0) @binding(2) var<storage, read_write> out : array<${t}>;
+${dimBinding(3)}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
-  if (i >= ${batch * hw * cpad}u) { return; }
+  if (i >= dim.x) { return; }
   let c = i % ${cpad}u;
   let img = i / ${hw * cpad}u;
   out[i] = x[i] + bias[img * ${cpad}u + c];
@@ -371,20 +383,21 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 
 /**
  * KataGo global pooling over one image's positions, one thread per
- * (image, channel). Writes [batch, 3*cpad]: mean, mean*f1, then max (gpool)
- * or mean*f2 (the value head's pooling).
+ * (image, channel), over `dim.x` images. Writes [batch, 3*cpad]: mean,
+ * mean*f1, then max (gpool) or mean*f2 (the value head's pooling).
  */
-function gpoolShader(t: string, kind: 'gpool' | 'value', batch: number, hw: number,
+function gpoolShader(t: string, kind: 'gpool' | 'value', hw: number,
                      cpad: number, f1: number, f2: number): string {
   const third = kind === 'gpool' ? 'mx' : `mean * ${f2}`;
   return `${t === 'f16' ? 'enable f16;\n' : ''}
 @group(0) @binding(0) var<storage, read> x : array<${t}>;
 @group(0) @binding(1) var<storage, read_write> out : array<${t}>;
+${dimBinding(2)}
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let img = gid.y;
   let c = gid.x;
-  if (c >= ${cpad}u || img >= ${batch}u) { return; }
+  if (c >= ${cpad}u || img >= dim.x) { return; }
   var sum = 0.0;
   var mx = f32(x[img * ${hw * cpad}u + c]);
   for (var p = 0u; p < ${hw}u; p++) {
@@ -460,6 +473,8 @@ type OutputName = 'policy' | 'policyPass' | 'value' | 'scoreValue';
 
 type Plan = {
   passes: Pass[];
+  /** What each pass reads its `dim` from. */
+  dims: GPUBuffer;
   spatialIn: GPUBuffer;
   globalIn: GPUBuffer;
   readbackSize: number;
@@ -568,10 +583,15 @@ export class KataGoWebGpuModel {
     if (old && old.size >= size) return old;
     if (old) {
       this.destroy(old);
-      this.plans.clear();
+      this.dropPlans();
     }
     return slots[n] = this.buffer({
       label, size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+  }
+
+  private dropPlans(): void {
+    for (const plan of this.plans.values()) this.destroy(plan.dims);
+    this.plans.clear();
   }
 
   private upload(name: string, data: Float32Array, wt: WeightType = this.wt): void {
@@ -715,13 +735,25 @@ export class KataGoWebGpuModel {
     const act = (cpad: number) => acquire(rows, rowsPad, cpad);
     const vec = (cpad: number) => acquire(batch, nPad, cpad);
 
-    const run = (label: string, pipeline: GPUComputePipeline, buffers: GPUBuffer[], dispatch: [number, number, number]) => {
+    // Each distinct `dim` gets 256 bytes, the offset alignment every device
+    // allows a binding to start at.
+    const dimValues: number[] = [];
+    const dims = this.buffer({
+      label: `dims ${batch}`, size: MAX_DIMS * 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const run = (label: string, pipeline: GPUComputePipeline, buffers: GPUBuffer[],
+                 dispatch: [number, number, number], dim: number) => {
+      let at = dimValues.indexOf(dim);
+      if (at < 0) at = dimValues.push(dim) - 1;
+      if (at >= MAX_DIMS) throw new Error(`more than ${MAX_DIMS} distinct dims`);
       passes.push({
         label,
         pipeline,
         bindGroup: device.createBindGroup({
           layout: pipeline.getBindGroupLayout(0),
-          entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } })),
+          entries: [
+            ...buffers.map((buffer, binding) => ({ binding, resource: { buffer } })),
+            { binding: buffers.length, resource: { buffer: dims, offset: 256 * at, size: 16 } },
+          ],
         }),
         dispatch,
       });
@@ -740,7 +772,7 @@ export class KataGoWebGpuModel {
       run(`matmul ${x.rowsPad}x${npad}x${x.cpad}`,
           this.pipeline(matmulShader(t, wt, x.rowsPad, npad, x.cpad), 'main'),
           [x.buffer, this.weight(weightName), out.buffer],
-          [...grid(x.rowsPad, npad, x.cpad), 1]);
+          [...grid(x.rowsPad, npad, x.cpad), 1], x.rowsPad);
       return out;
     };
 
@@ -749,18 +781,18 @@ export class KataGoWebGpuModel {
       const npad = padC(nOut);
       const v = acquire(36 * wRowsPad, 36 * wRowsPad, x.cpad);
       run(`wino-transform c${x.cpad}`,
-          this.pipeline(winogradTransformShader(t, size, batch, x.cpad, wRowsPad), 'transform'),
-          [x.buffer, v.buffer], [Math.ceil(x.cpad / 64), wRows, 1]);
+          this.pipeline(winogradTransformShader(t, size, x.cpad), 'transform'),
+          [x.buffer, v.buffer], [Math.ceil(x.cpad / 64), wRows, 1], wRowsPad);
       const mm = acquire(36 * wRowsPad, 36 * wRowsPad, npad);
       run(`wino-matmul 36x${wRowsPad}x${npad}x${x.cpad}`,
           this.pipeline(matmulShader(t, wt, wRowsPad, npad, x.cpad), 'main'),
           [v.buffer, this.weight(weightName), mm.buffer],
-          [...grid(wRowsPad, npad, x.cpad), 36]);
+          [...grid(wRowsPad, npad, x.cpad), 36], wRowsPad);
       release(v);
       const out = act(npad);
       run(`wino-untransform c${npad}`,
-          this.pipeline(winogradUntransformShader(t, size, batch, npad, wRowsPad), 'untransform'),
-          [mm.buffer, out.buffer], [Math.ceil(npad / 64), wRows, 1]);
+          this.pipeline(winogradUntransformShader(t, size, npad), 'untransform'),
+          [mm.buffer, out.buffer], [Math.ceil(npad / 64), wRows, 1], wRowsPad);
       release(mm);
       return out;
     };
@@ -771,9 +803,9 @@ export class KataGoWebGpuModel {
     const bnAct = (x: Tensor, bnName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, x.cpad, kind), 'main'),
           [x.buffer, this.weight(`${bnName}.scale`), this.weight(`${bnName}.bias`), out.buffer],
-          [Math.ceil(elems / 256), 1, 1]);
+          [Math.ceil(elems / 256), 1, 1], elems);
       return out;
     };
 
@@ -781,9 +813,9 @@ export class KataGoWebGpuModel {
     const biasAct = (x: Tensor, biasName: string, kind: ActivationKind): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
       const elems = x.rowsPad * x.cpad;
-      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, elems, x.cpad, kind), 'main'),
+      run(`bnAct c${x.cpad}`, this.pipeline(bnActShader(t, x.cpad, kind), 'main'),
           [x.buffer, this.weight('ones'), this.weight(biasName), out.buffer],
-          [Math.ceil(elems / 256), 1, 1]);
+          [Math.ceil(elems / 256), 1, 1], elems);
       return out;
     };
 
@@ -791,16 +823,17 @@ export class KataGoWebGpuModel {
     const add = (a: Tensor, b: Tensor): Tensor => {
       const out = acquire(a.rows, a.rowsPad, a.cpad);
       const elems = a.rowsPad * a.cpad;
-      run('add', this.pipeline(addShader(t, elems), 'main'),
-          [a.buffer, b.buffer, out.buffer], [Math.ceil(elems / 256), 1, 1]);
+      run('add', this.pipeline(addShader(t), 'main'),
+          [a.buffer, b.buffer, out.buffer], [Math.ceil(elems / 256), 1, 1], elems);
       return out;
     };
 
     /** x [rows, cpad] plus a per-image [batch, cpad] channel bias. */
     const addBias = (x: Tensor, bias: Tensor): Tensor => {
       const out = acquire(x.rows, x.rowsPad, x.cpad);
-      run('addBias', this.pipeline(addBiasShader(t, batch, hw, x.cpad), 'main'),
-          [x.buffer, bias.buffer, out.buffer], [Math.ceil(batch * hw * x.cpad / 256), 1, 1]);
+      const elems = batch * hw * x.cpad;
+      run('addBias', this.pipeline(addBiasShader(t, hw, x.cpad), 'main'),
+          [x.buffer, bias.buffer, out.buffer], [Math.ceil(elems / 256), 1, 1], elems);
       return out;
     };
 
@@ -808,8 +841,8 @@ export class KataGoWebGpuModel {
     const factor2 = (size - 14) ** 2 * 0.01 - 0.1;
     const gpool = (x: Tensor, kind: 'gpool' | 'value'): Tensor => {
       const out = acquire(batch, nPad, 3 * x.cpad);
-      run(`gpool-${kind}`, this.pipeline(gpoolShader(t, kind, batch, hw, x.cpad, factor1, factor2), 'main'),
-          [x.buffer, out.buffer], [Math.ceil(x.cpad / 64), batch, 1]);
+      run(`gpool-${kind}`, this.pipeline(gpoolShader(t, kind, hw, x.cpad, factor1, factor2), 'main'),
+          [x.buffer, out.buffer], [Math.ceil(x.cpad / 64), batch, 1], batch);
       return out;
     };
 
@@ -910,8 +943,12 @@ export class KataGoWebGpuModel {
       readbackLayout.push({ name, offset, tensor });
       offset += roundUp(tensor.rowsPad * tensor.cpad * this.width, 4);
     }
+    const dimData = new Uint32Array(64 * dimValues.length);
+    dimValues.forEach((v, i) => { dimData[64 * i] = v; });
+    device.queue.writeBuffer(dims, 0, dimData);
     return {
       passes,
+      dims,
       spatialIn: spatial.buffer,
       globalIn: global.buffer,
       readbackSize: offset,
@@ -1070,5 +1107,6 @@ export class KataGoWebGpuModel {
     for (const buffer of this.weights.values()) this.destroy(buffer);
     for (const r of this.readouts) this.destroyReadout(r);
     for (const slots of this.slots.values()) for (const buffer of slots) this.destroy(buffer);
+    this.dropPlans();
   }
 }
