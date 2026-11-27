@@ -350,11 +350,16 @@ async function start(options: Extract<ToEngine, { kind: 'start' }>): Promise<voi
   // by dropping the whole worker. One loop per engine server thread, so one
   // batch is packed and read back while the GPU runs the other.
   const stats: EvalStats = { evals: 0, rows: 0, nanos: 0 };
-  const onEval = () => post({ kind: 'stats', stats: {
-    ...stats,
-    stages: gpuModel ? { ...gpuModel.stages } : undefined,
-    kernels: profile && gpuModel ? [...gpuModel.gpuByLabel] : undefined,
-  } });
+  const onEval = () => {
+    // What the GPU holds stays flat once the search has run its widest batch.
+    if (gpuModel && stats.evals % 1000 === 0) post({ kind: 'log', line: `GPU after ${stats.evals} evals: ` +
+      `${gpuModel.allocated.buffers} buffers, ${(gpuModel.allocated.bytes / 2 ** 20).toFixed(0)} MB` });
+    post({ kind: 'stats', stats: {
+      ...stats,
+      stages: gpuModel ? { ...gpuModel.stages } : undefined,
+      kernels: profile && gpuModel ? [...gpuModel.gpuByLabel] : undefined,
+    } });
+  };
   for (let idx = 0; idx < serverThreads; idx++) {
     void serveEvals(module.wasmMemory, module._katahexControlBlockAddress(idx), model, { stats, onEval })
       .catch(fail);

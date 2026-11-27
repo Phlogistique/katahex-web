@@ -464,8 +464,6 @@ type Plan = {
   globalIn: GPUBuffer;
   readbackSize: number;
   readbackLayout: { name: OutputName; offset: number; tensor: Tensor }[];
-  /** One per evaluation in flight; evaluate takes one and puts it back. */
-  readouts: Readout[];
 };
 
 /** The buffers one in-flight evaluation reads its results through. */
@@ -495,10 +493,17 @@ export class KataGoWebGpuModel {
   private readonly weights = new Map<string, GPUBuffer>();
   private readonly pipelines = new Map<string, GPUComputePipeline>();
   private readonly plans = new Map<number, Plan>();
-  private readonly activations: GPUBuffer[] = [];
+  /**
+   * Activation buffers by channel count, in the order a plan asks for them.
+   * Every plan shares them: the search makes batches of every size up to its
+   * maximum, and a plan per size with buffers of its own adds up to gigabytes.
+   */
+  private readonly slots = new Map<number, GPUBuffer[]>();
+  /** One per evaluation in flight; evaluate takes one and puts it back. */
+  private readonly readouts: Readout[] = [];
 
   /**
-   * What this model has asked the GPU for, and the batch it was last asked to
+   * What this model holds on the GPU, and the batch it was last asked to
    * evaluate. A device that dies on a phone says only that it died, so these
    * are what the report has instead.
    */
@@ -542,6 +547,31 @@ export class KataGoWebGpuModel {
     this.allocated.bytes += descriptor.size;
     this.allocated.buffers += 1;
     return this.device.createBuffer(descriptor);
+  }
+
+  private destroy(buffer: GPUBuffer): void {
+    this.allocated.bytes -= buffer.size;
+    this.allocated.buffers -= 1;
+    buffer.destroy();
+  }
+
+  /**
+   * The n-th activation buffer with `cpad` channels, at least `size` bytes.
+   * Growing one drops every plan, since their bind groups point at the old one;
+   * the evaluations already submitted still run, as WebGPU frees a destroyed
+   * buffer only once the work using it is done.
+   */
+  private slot(cpad: number, n: number, size: number, label: string): GPUBuffer {
+    const slots = this.slots.get(cpad) ?? [];
+    this.slots.set(cpad, slots);
+    const old = slots[n];
+    if (old && old.size >= size) return old;
+    if (old) {
+      this.destroy(old);
+      this.plans.clear();
+    }
+    return slots[n] = this.buffer({
+      label, size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
   }
 
   private upload(name: string, data: Float32Array, wt: WeightType = this.wt): void {
@@ -662,20 +692,19 @@ export class KataGoWebGpuModel {
 
     const passes: Pass[] = [];
 
-    // Buffers pooled by shape; a released buffer is only reused at the same
-    // shape, which keeps the channel-padding zeros valid.
+    // Buffers pooled by shape, and shared with the other plans by channel
+    // count: a buffer only ever holds one channel count, which keeps the
+    // channel-padding zeros valid.
     const pool = new Map<string, GPUBuffer[]>();
+    const taken = new Map<number, number>();
     const acquire = (r: number, rPad: number, cpad: number): Tensor => {
       const key = `${rPad}x${cpad}`;
       const free = pool.get(key) ?? [];
       let buffer = free.pop();
       if (!buffer) {
-        buffer = this.buffer({
-          label: `act ${key}`,
-          size: rPad * cpad * this.width,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-        });
-        this.activations.push(buffer);
+        const n = taken.get(cpad) ?? 0;
+        taken.set(cpad, n + 1);
+        buffer = this.slot(cpad, n, rPad * cpad * this.width, `act ${key}`);
       }
       pool.set(key, free);
       return { buffer, rows: r, rowsPad: rPad, cpad };
@@ -887,7 +916,6 @@ export class KataGoWebGpuModel {
       globalIn: global.buffer,
       readbackSize: offset,
       readbackLayout,
-      readouts: [],
     };
   }
 
@@ -934,7 +962,12 @@ export class KataGoWebGpuModel {
     // Input and activation buffers are shared between evaluations in flight;
     // that is safe because writeBuffer and submit execute in queue order. Only
     // the readout is taken out of the pool for the whole call.
-    const readout = plan.readouts.pop() ?? this.makeReadout(plan);
+    let readout = this.readouts.pop();
+    if (readout && readout.readback.size < plan.readbackSize) {
+      this.destroyReadout(readout);
+      readout = undefined;
+    }
+    readout ??= this.makeReadout(plan);
 
     const encoder = this.device.createCommandEncoder();
     if (this.profile && readout.querySet) {
@@ -1004,7 +1037,7 @@ export class KataGoWebGpuModel {
           Float32Array.from({ length: channels }, (_, c) => column(image, c)));
       }
     }
-    plan.readouts.push(readout);
+    this.readouts.push(readout);
     this.stages.pack += (submitted - started) * 1e6;
     this.stages.gpu += (mapped - submitted) * 1e6;
     this.stages.convert += (performance.now() - mapped) * 1e6;
@@ -1026,15 +1059,16 @@ export class KataGoWebGpuModel {
     };
   }
 
+  private destroyReadout(r: Readout): void {
+    this.destroy(r.readback);
+    r.querySet?.destroy();
+    if (r.queryResolve) this.destroy(r.queryResolve);
+    if (r.queryReadback) this.destroy(r.queryReadback);
+  }
+
   dispose(): void {
-    for (const buffer of this.weights.values()) buffer.destroy();
-    for (const plan of this.plans.values())
-      for (const r of plan.readouts) {
-        r.readback.destroy();
-        r.querySet?.destroy();
-        r.queryResolve?.destroy();
-        r.queryReadback?.destroy();
-      }
-    for (const buffer of this.activations) buffer.destroy();
+    for (const buffer of this.weights.values()) this.destroy(buffer);
+    for (const r of this.readouts) this.destroyReadout(r);
+    for (const slots of this.slots.values()) for (const buffer of slots) this.destroy(buffer);
   }
 }
