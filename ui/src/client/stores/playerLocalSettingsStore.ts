@@ -1,10 +1,11 @@
 /*
  * Written here, at PlayHex's module path: PlayHex's store holds a dozen settings for its whole
- * site, through class-transformer. The hexplorer reads one of them, and one is this app's own.
+ * site, through class-transformer. The hexplorer reads one of them, and the rest are this app's own.
  */
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import type { SurvivalSettings } from '../../survival.js';
+import type { FindMoveSettings } from '../../findMove.js';
 
 const LOCAL_SETTINGS_KEY = 'hex-local-settings';
 
@@ -21,6 +22,10 @@ export type LocalSettings = {
     /** The survival game's settings, and its best score for each way of setting it. */
     survival?: Partial<SurvivalSettings>;
     survivalBest?: Record<string, number>;
+
+    /** The find-the-move game's settings, and its best score for each way of setting it. */
+    findMove?: Partial<FindMoveSettings>;
+    findMoveBest?: Record<string, number>;
 };
 
 const load = (): LocalSettings => {

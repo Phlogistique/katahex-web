@@ -487,6 +487,42 @@ the game already rated without searching them again, wherever the game's search 
 as the board's analyzer asks for: 200 visits by default, as are self-play's searches, where
 KataHex's answers, at 100, are searched again.
 
+### Find KataHex's move
+
+The sidebar's Find the move tab opens a second game over the board (`ui/src/findMove.ts` for the
+rules and the decoys, `ui/src/FindMoveGame.vue` for the game). The player is red against
+KataHex, but does not place stones freely: each turn three cells are marked A, B and C, one the
+move KataHex's search plays and two decoys, moves that look natural and after which a search
+rates red under 30%. A decoy ends the game, with blue's answer to it played and KataHex's move
+circled; the score is how many of KataHex's moves the player found. Blue answers each move with
+the net's favourite, at one visit.
+
+Red cannot simply start on the empty board without the swap: KataHex rates it 99.8% for red on
+11x11, and in self-play from there nothing natural lost for red, every candidate kept red over
+99%. So red opens on a fair first move from PlayHex's swap maps, which red keeps, and the net
+plays itself, red its favourite move and blue a middling one as in Survive, until the net rates
+red at least 85% after at least a random number of moves up to ten. Red is then ahead, but the
+position is still a fight, and from there KataHex's searches rated red between 96% and 99%
+while most natural alternatives lost.
+
+The decoys are drawn from moves a human might play: the net's eight favourites, the cells
+around KataHex's move (adjacent, or a bridge away), blue's three favourites, red's favourite as
+if KataHex's move were already on the board, and, for each stone, the move whose policy gains
+most once that stone is taken away, as if it were not there. They are tried nearest the fight
+first, within two cells of KataHex's move or of blue's last, then by policy: a far-away decoy is
+dismissed at a glance, where a neighbour of the right move has to be read out. The net alone
+rates each candidate first, one batch of single evaluations, and only those it does not rate
+over 80% for red are searched, until two lose. When none does, KataHex plays its move for the
+player and the game goes on.
+
+Measured with the native engine on the CPU, 100 visits for KataHex's move and 32 to check a
+decoy, on 11x11, one game of 11 questions so far: every question found its two decoys, ten
+of them among the first two candidates searched, and red playing KataHex's move stayed between
+96% and 99%. KataHex's move was the net's favourite 8 times out of 11 (where the net alone gives
+it away, at a policy of 0.99, 4 times), its second the other 3. Decoys were often a neighbour of
+the right move: e7 against d7 and f7 beside it, both under 18%. A question took 20 to 30 seconds
+on 4 CPU cores; the page on a GPU searches several times faster.
+
 ### Search speed, 11x11 on the Iris Xe laptop
 
 Sweeping in a reversed order -- 8, 16, 32, 32, 16, 8 -- with nothing else on the
