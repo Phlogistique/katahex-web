@@ -693,8 +693,8 @@ export class KataGoWebGpuModel {
     const passes: Pass[] = [];
 
     // Buffers pooled by shape, and shared with the other plans by channel
-    // count: a buffer only ever holds one channel count, which keeps the
-    // channel-padding zeros valid.
+    // count. No kernel reads what an earlier evaluation left: each writes every
+    // channel of every real row, zeros in the padding channels.
     const pool = new Map<string, GPUBuffer[]>();
     const taken = new Map<number, number>();
     const acquire = (r: number, rPad: number, cpad: number): Tensor => {
