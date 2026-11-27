@@ -47,6 +47,17 @@ function pipeline(device: GPUDevice, half: boolean, s: Shape, tile: MatmulTile):
   });
 }
 
+/** The bind group matmulShader takes: a, b, c, then a uniform holding m. */
+function bind(device: GPUDevice, p: GPUComputePipeline, buffers: GPUBuffer[], m: number): GPUBindGroup {
+  const dim = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true });
+  new Uint32Array(dim.getMappedRange())[0] = m;
+  dim.unmap();
+  return device.createBindGroup({
+    layout: p.getBindGroupLayout(0),
+    entries: [...buffers, dim].map((buffer, binding) => ({ binding, resource: { buffer } })),
+  });
+}
+
 // Every input depends on all of its indices, so a swapped k lane or a wrong
 // column stride moves the answer -- which all-ones inputs would not. The values
 // are small integers whose products sum exactly in fp16 over these k.
@@ -89,10 +100,7 @@ async function verify(device: GPUDevice, half: boolean, tile: MatmulTile) {
   const encoder = device.createCommandEncoder();
   const pass = encoder.beginComputePass();
   pass.setPipeline(p);
-  pass.setBindGroup(0, device.createBindGroup({
-    layout: p.getBindGroupLayout(0),
-    entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } })),
-  }));
+  pass.setBindGroup(0, bind(device, p, buffers, s.m));
   pass.dispatchWorkgroups(Math.ceil(s.n / 64), s.m / (tile.wgY * tile.rows), s.z);
   pass.end();
   const bytes = counts[2] * width;
@@ -143,10 +151,7 @@ async function run() {
         .map((count, i) => device.createBuffer({ size: count * widths(f)[i], usage }));
       const runs = TILES.filter(({ tile }) => fits(s, tile)).map(({ label, tile }) => {
         const p = pipeline(device, f, s, tile);
-        const bindGroup = device.createBindGroup({
-          layout: p.getBindGroupLayout(0),
-          entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } })),
-        });
+        const bindGroup = bind(device, p, buffers, s.m);
         const grid: [number, number, number] =
           [Math.ceil(s.n / 64), s.m / (tile.wgY * tile.rows), s.z];
         return { label, pipeline: p, bindGroup, grid, best: Infinity };

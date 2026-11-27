@@ -744,7 +744,10 @@ export class KataGoWebGpuModel {
                  dispatch: [number, number, number], dim: number) => {
       let at = dimValues.indexOf(dim);
       if (at < 0) at = dimValues.push(dim) - 1;
-      if (at >= MAX_DIMS) throw new Error(`more than ${MAX_DIMS} distinct dims`);
+      if (at >= MAX_DIMS) {
+        this.destroy(dims);
+        throw new Error(`more than ${MAX_DIMS} distinct dims`);
+      }
       passes.push({
         label,
         pipeline,
