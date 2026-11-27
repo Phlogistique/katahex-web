@@ -436,7 +436,8 @@ file that is not in this repository:
 ### Survive KataHex
 
 The sidebar's Survive tab opens a game over the board (`ui/src/survival.ts` for the rules,
-`ui/src/SurvivalGame.vue` for the game). It opens as a game with the swap rule does, from
+`ui/src/SurvivalGame.vue` for the game). The url names an open game, `?game=survival` here and
+`?game=find-move` for the game below, so a link or a reload opens it directly. It opens as a game with the swap rule does, from
 PlayHex's swap maps (`ui/src/shared/swap-maps`, computed with this same net at 1000 playouts a
 cell): red plays a fair first move, likelier the closer KataHex rates it to even, and blue
 swaps it or not at random, likelier the stronger it is, as PlayHex's own AIs do. Either side

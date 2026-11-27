@@ -121,11 +121,20 @@ const navPanels = computed(() => [
     { key: 'help' as const, icon: IconQuestionCircle, labelKey: 'hexplorer.tab_help' },
 ]);
 
+type Game = 'survival' | 'find-move';
+
 /*
- * The game open over the board, if any. The board's searches stop while one is open, and whatever
- * they had in flight is dropped, so that the game's searches have the engine to themselves.
+ * The game open over the board, if any, which the url names as ?game=survival or
+ * ?game=find-move. The board's searches stop while one is open, and whatever they had in flight
+ * is dropped, so that the game's searches have the engine to themselves.
  */
-const gameOpen = ref<'survival' | 'find-move' | null>(null);
+const gameOpen = ref<Game | null>(([
+    'survival', 'find-move',
+] as const).find(game => game === new URLSearchParams(location.search).get('game')) ?? null);
+
+if (gameOpen.value !== null) {
+    currentTab.value = gameOpen.value;
+}
 
 watch(gameOpen, game => {
     const open = game !== null;
@@ -135,7 +144,17 @@ watch(gameOpen, game => {
     if (open) {
         engine.abortPending();
     }
-});
+
+    const url = new URL(location.href);
+
+    if (open) {
+        url.searchParams.set('game', game);
+    } else {
+        url.searchParams.delete('game');
+    }
+
+    history.replaceState(history.state, '', url);
+}, { immediate: true });
 
 const closeGame = async (): Promise<void> => {
     gameOpen.value = null;
