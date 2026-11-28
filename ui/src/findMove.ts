@@ -9,6 +9,11 @@
  * where they are ahead but mistakes cost. Were they far behind, their best move and a blunder
  * would lose alike.
  *
+ * Or the game starts on the empty board, with the swap. Red's first question is a first move
+ * PlayHex's swap maps rate fair against two they rate far from it, either way. Blue's is
+ * whether to swap red's first move, which is fair, and then either answer will do, or far from
+ * it.
+ *
  * This file is the rules and the decoys, with the engine passed in, and no ui.
  * FindMoveGame.vue plays the game with them.
  *
@@ -16,13 +21,16 @@
  */
 import { coordsToMove, parseMove as parseCell, type Move } from '@playhex/move-notation';
 import type { EngineAnalysis } from './engine.js';
-import { bestChild, bestPriorMove, pickMediocreMove, SurvivalBoard, type Stone, type SurvivalColor } from './survival.js';
-import { pickFairFirstMove } from './shared/swap-maps/swapDecision.js';
+import { bestChild, bestPriorMove, pickMediocreMove, SurvivalBoard, SWAP, type Stone, type SurvivalColor } from './survival.js';
+import { getFirstMoveCandidates, getFirstMoveWinRate, pickFairFirstMove } from './shared/swap-maps/swapDecision.js';
 
 export type FindMoveSettings = {
     boardSize: number;
 
     color: SurvivalColor;
+
+    /** Whether KataHex plays itself an opening first, or the game starts on the empty board. */
+    opening: boolean;
 
     /** Visits of the search that finds KataHex's move. */
     visits: number;
@@ -34,6 +42,7 @@ export type FindMoveSettings = {
 export const DEFAULT_FIND_MOVE_SETTINGS: FindMoveSettings = {
     boardSize: 11,
     color: 'random',
+    opening: true,
     visits: 200,
     checkVisits: 50,
 };
@@ -50,14 +59,15 @@ export const sanitizeFindMoveSettings = (stored: Partial<FindMoveSettings> | und
     return {
         boardSize: integer(merged.boardSize, d.boardSize, 5, 19),
         color: (['random', 'red', 'blue'] as const).find(color => color === merged.color) ?? d.color,
+        opening: typeof merged.opening === 'boolean' ? merged.opening : d.opening,
         visits: integer(merged.visits, d.visits, 1, 100000),
         checkVisits: integer(merged.checkVisits, d.checkVisits, 1, 100000),
     };
 };
 
-/** What a best score is filed under: red's as before there was a choice. */
+/** What a best score is filed under: red's after an opening as before there was a choice. */
 export const findMoveKey = (s: FindMoveSettings): string =>
-    [s.boardSize, s.visits, s.checkVisits, ...(s.color === 'red' ? [] : [s.color])].join('/');
+    [s.boardSize, s.visits, s.checkVisits, ...(s.color === 'red' ? [] : [s.color]), ...(s.opening ? [] : ['empty'])].join('/');
 
 /** A position to search, which may be the board's with a stone added or taken away. */
 export type Position = { red: string[], blue: string[], toMove: Stone };
@@ -310,6 +320,61 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
         kataHex: { move: kataHex, win: kataHexWin },
         decoys,
     };
+};
+
+/** A first move far from fair: red's winrate by the swap maps is at least this, or at most 1 minus it. */
+const UNBALANCED = 0.95;
+
+/** First moves the swap maps rate far from fair, too strong, swapped, or too weak, with red's winrate. */
+const unbalanced = (size: number, strong: boolean): { move: string, winRate: number }[] => {
+    const fair = new Set(getFirstMoveCandidates(size)?.map(({ move }) => move));
+    const cells: { move: string, winRate: number }[] = [];
+
+    for (let row = 0; row < size; ++row) {
+        for (let col = 0; col < size; ++col) {
+            const move = coordsToMove({ row, col });
+            const winRate = getFirstMoveWinRate(size, move)!;
+
+            if (!fair.has(move) && (strong ? winRate >= UNBALANCED : winRate <= 1 - UNBALANCED)) {
+                cells.push({ move, winRate });
+            }
+        }
+    }
+
+    return cells;
+};
+
+const drawn = <T>(items: T[], random: () => number): T => items[Math.min(items.length - 1, Math.floor(random() * items.length))];
+
+/**
+ * Red's first move: a fair one against one too strong, which blue swaps, and one too weak. Each
+ * is rated by the swap maps, for red after it and blue's answer.
+ */
+export const firstMoveQuestion = (size: number, random: () => number = Math.random): Question => {
+    const fair = pickFairFirstMove(size, random)!;
+    const strong = drawn(unbalanced(size, true), random);
+    const weak = drawn(unbalanced(size, false), random);
+
+    return {
+        kataHex: { move: fair, win: getFirstMoveWinRate(size, fair)! },
+        decoys: [{ move: strong.move, win: 1 - strong.winRate, answer: SWAP }, { move: weak.move, win: weak.winRate }],
+    };
+};
+
+/**
+ * Red's first move when the player is blue, fair or far from it as likely, its winrate for red by
+ * the swap maps, and whether blue should swap it: null when it is fair, and either will do.
+ */
+export const swapQuestion = (size: number, random: () => number = Math.random): { move: string, winRate: number, swap: boolean | null } => {
+    if (random() < 0.5) {
+        const move = pickFairFirstMove(size, random)!;
+
+        return { move, winRate: getFirstMoveWinRate(size, move)!, swap: null };
+    }
+
+    const swap = random() < 0.5;
+
+    return { ...drawn(unbalanced(size, swap), random), swap };
 };
 
 /** The three choices in random order, or fewer when there were not two decoys. */

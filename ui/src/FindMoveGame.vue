@@ -14,9 +14,11 @@ import { parseMove, type HexMove, type Move } from '@playhex/move-notation';
 import { engine, netBackend, SearchAborted, type EngineAnalysis } from './engine.js';
 import usePlayerLocalSettingsStore from './client/stores/playerLocalSettingsStore.js';
 import { PlayerSettingsFacade } from './client/services/board-view-facades/PlayerSettingsFacade.js';
-import { bestPriorMove, SurvivalBoard, type Stone } from './survival.js';
+import { bestPriorMove, SurvivalBoard, SWAP, type Stone } from './survival.js';
+import { shouldSwap } from './shared/swap-maps/swapDecision.js';
 import {
     findMoveKey,
+    firstMoveQuestion,
     middlingMove,
     other,
     playOpening,
@@ -24,6 +26,7 @@ import {
     prepareQuestion,
     sanitizeFindMoveSettings,
     shuffled,
+    swapQuestion,
     type Choice,
     type FindMoveSettings,
     type Position,
@@ -37,7 +40,7 @@ const emit = defineEmits<{
 
 const { localSettings } = storeToRefs(usePlayerLocalSettingsStore());
 
-type Phase = 'setup' | 'opening' | 'preparing' | 'choosing' | 'answering' | 'over';
+type Phase = 'setup' | 'opening' | 'preparing' | 'choosing' | 'swapping' | 'answering' | 'over';
 
 const phase = ref<Phase>('setup');
 
@@ -52,6 +55,9 @@ const found = ref(0);
 const handover = ref(0);
 const status = ref('');
 const endReason = ref('');
+
+/** What the last answer was worth, when the game goes on and the board does not say. */
+const notice = ref('');
 const error = ref<string | null>(null);
 const bestBefore = ref<number | null>(null);
 const best = computed(() => localSettings.value.findMoveBest?.[findMoveKey(sanitizeFindMoveSettings(form))] ?? null);
@@ -71,6 +77,9 @@ let board = new SurvivalBoard(settings.boardSize);
 let gameView: GameView | null = null;
 let facade: PlayingGameFacade | null = null;
 let question: Question | null = null;
+
+/** Red's first move, when the player is blue and is to say whether to swap it. */
+let swapAsked: ReturnType<typeof swapQuestion> | null = null;
 
 /** The moves on offer, by the letter they are marked with. */
 const choices = ref<Choice[]>([]);
@@ -170,10 +179,26 @@ const start = async (): Promise<void> => {
     yourWin.value = null;
     you.value = settings.color === 'red' ? 0 : settings.color === 'blue' ? 1 : (Math.random() < 0.5 ? 0 : 1);
     endReason.value = '';
+    notice.value = '';
     error.value = null;
     choices.value = [];
     bestBefore.value = best.value;
     await newBoard();
+
+    if (!settings.opening) {
+        handover.value = 0;
+
+        if (you.value === 0) {
+            offer(firstMoveQuestion(board.size), 'Which one is a fair first move?');
+        } else {
+            swapAsked = swapQuestion(board.size);
+            play(swapAsked.move);
+            phase.value = 'swapping';
+            status.value = 'Do you swap red\'s first move?';
+        }
+
+        return;
+    }
 
     try {
         phase.value = 'opening';
@@ -186,31 +211,37 @@ const start = async (): Promise<void> => {
     }
 };
 
+const offer = (asked: Question, prompt: string): void => {
+    question = asked;
+    choices.value = shuffled([asked.kataHex, ...asked.decoys]);
+    choices.value.forEach((choice, i) => mark(choice.move, 'ABC'[i]));
+    phase.value = 'choosing';
+    status.value = prompt;
+};
+
 /** Searches the position for KataHex's move and its decoys, and offers them; the player is to move. */
 const nextQuestion = async (gen: number): Promise<void> => {
     for (;;) {
         phase.value = 'preparing';
         status.value = 'KataHex looks for its move, and for moves that lose…';
-        question = await prepareQuestion(board, ask(gen), settings);
-        yourWin.value = question.kataHex.win;
 
-        if (question.decoys.length > 0) {
-            break;
+        const asked = await prepareQuestion(board, ask(gen), settings);
+
+        yourWin.value = asked.kataHex.win;
+
+        if (asked.decoys.length > 0) {
+            offer(asked, 'Which one is KataHex\'s move?');
+            return;
         }
 
         // Nothing natural loses here, so there is nothing to find: KataHex plays its move. If the
         // player is behind, which is why nothing loses by much more, the answer is a middling move.
-        play(question.kataHex.move);
+        play(asked.kataHex.move);
 
-        if (await answer(gen, question.kataHex.win < 0.5)) {
+        if (await answer(gen, asked.kataHex.win < 0.5)) {
             return;
         }
     }
-
-    choices.value = shuffled([question.kataHex, ...question.decoys]);
-    choices.value.forEach((choice, i) => mark(choice.move, 'ABC'[i]));
-    phase.value = 'choosing';
-    status.value = 'Which one is KataHex\'s move?';
 };
 
 /** KataHex answers with the net's favourite move, or a middling one. True if the game is over. */
@@ -242,9 +273,11 @@ const choose = async (move: string): Promise<void> => {
 
     const gen = generation;
     const decoy = question.decoys.find(d => d.move === move);
+    const first = board.moves.length === 0;
 
     clearMarks();
     choices.value = [];
+    notice.value = '';
     play(move);
 
     if (decoy) {
@@ -255,6 +288,13 @@ const choose = async (move: string): Promise<void> => {
         }
 
         circle(question.kataHex.move);
+
+        if (first) {
+            finish(`That first move is not fair: PlayHex's swap maps rate you ${percent(decoy.win)} after it`
+                + `${decoy.answer === SWAP ? ', once blue swaps it' : ''}, and ${percent(question.kataHex.win)} after the fair one, circled.`);
+            return;
+        }
+
         finish(`That move loses: KataHex rates you ${percent(decoy.win)} after it, and `
             + `${percent(question.kataHex.win)} after its own move, circled. `
             + (decoy.answer === question.kataHex.move ? 'It answers on the circled cell.' : 'It answers as shown.'));
@@ -264,9 +304,50 @@ const choose = async (move: string): Promise<void> => {
     found.value++;
 
     try {
-        if (!await answer(gen)) {
+        if (first && shouldSwap(board.size, move)) {
+            play(SWAP);
+            notice.value = 'Blue swapped your first move.';
+            await nextQuestion(gen);
+        } else if (!await answer(gen)) {
             await nextQuestion(gen);
         }
+    } catch (e) {
+        fail(gen, e);
+    }
+};
+
+const decideSwap = async (swap: boolean): Promise<void> => {
+    if (phase.value !== 'swapping' || !swapAsked) {
+        return;
+    }
+
+    const gen = generation;
+    const { winRate, swap: right } = swapAsked;
+
+    swapAsked = null;
+
+    if (right !== null && right !== swap) {
+        finish(`PlayHex's swap maps rate red ${percent(winRate)} after its first move: `
+            + (right ? 'you had to swap it.' : 'swapping it gives you that move.'));
+        return;
+    }
+
+    if (right === null) {
+        notice.value = `Either was fine: PlayHex's swap maps rate red's first move fair, at ${percent(winRate)} for red.`;
+    } else {
+        found.value++;
+    }
+
+    try {
+        if (swap) {
+            play(SWAP);
+
+            if (await answer(gen)) {
+                return;
+            }
+        }
+
+        await nextQuestion(gen);
     } catch (e) {
         fail(gen, e);
     }
@@ -303,7 +384,9 @@ const giveUp = (): void => {
 
     if (was === 'choosing' && question) {
         circle(question.kataHex.move);
-        finish(`You gave up. KataHex's move, circled, keeps you at ${percent(question.kataHex.win)}.`);
+        finish(board.moves.length === 0
+            ? `You gave up. The fair first move is circled, at ${percent(question.kataHex.win)} for you.`
+            : `You gave up. KataHex's move, circled, keeps you at ${percent(question.kataHex.win)}.`);
         return;
     }
 
@@ -352,6 +435,8 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
         <div class="game-inner">
             <div ref="board-element" class="game-view"></div>
 
+            <div v-if="notice" class="notice alert alert-info small py-1 px-2 m-0">{{ notice }}</div>
+
             <div v-if="phase === 'setup'" class="panel">
                 <div class="card shadow">
                     <div class="card-body">
@@ -377,6 +462,10 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
                                 <option value="red">red</option>
                                 <option value="blue">blue</option>
                             </select></label>
+                            <label class="form-check opening-check">
+                                <input v-model="form.opening" type="checkbox" class="form-check-input">
+                                Play a few opening moves
+                            </label>
                             <label>KataHex's visits <input v-model.number="form.visits" type="number" min="1" class="form-control form-control-sm"></label>
                             <label>Visits to check a decoy loses <input v-model.number="form.checkVisits" type="number" min="1" class="form-control form-control-sm"></label>
                             <div class="d-flex gap-2 align-items-center mt-2">
@@ -416,6 +505,10 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
                 :class="you === 0 ? 'text-danger' : 'text-primary'"
                 title="Your winrate, by KataHex"
             >{{ percent(yourWin) }}</strong>
+            <template v-if="phase === 'swapping'">
+                <button type="button" class="btn btn-sm btn-primary swap-btn" @click="decideSwap(true)">Swap</button>
+                <button type="button" class="btn btn-sm btn-outline-primary no-swap-btn" @click="decideSwap(false)">Don't swap</button>
+            </template>
             <button
                 v-if="phase !== 'setup' && phase !== 'over'"
                 type="button"
@@ -468,6 +561,14 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
     width 100%
     height 100%
 
+.notice
+    position absolute
+    top 0.5rem
+    left 50%
+    transform translateX(-50%)
+    max-width calc(100% - 1rem)
+    pointer-events none
+
 .panel
     position absolute
     inset 0
@@ -505,6 +606,12 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
 
     > div
         width 100%
+
+    .opening-check
+        flex-direction row
+        gap 0.4rem
+        width 100%
+        flex-basis 100%
 
 .bottom-bar
     flex-shrink 0
