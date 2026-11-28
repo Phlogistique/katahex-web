@@ -68,16 +68,16 @@ const OPENING_RED_WIN = 0.85;
 /** Self-play hands over after this many moves even if red is not there yet. */
 const OPENING_MAX_MOVES = 30;
 
-/** During the opening, blue plays a move after which the net rates blue at most this... */
-const OPENING_BLUE_WIN = 0.65;
+/** Blue's middling move leaves blue at most this, by the net... */
+const MIDDLING_BLUE_WIN = 0.65;
 
-/** ...if it finds one among this many of its middling moves. */
-const OPENING_BLUE_TRIES = 10;
+/** ...if one of this many tries does. */
+const MIDDLING_BLUE_TRIES = 10;
 
 /**
  * Plays the opening on `board` through `play`: red's fair first move, then the net against
  * itself, red its favourite move and blue a middling one that leaves blue at most
- * OPENING_BLUE_WIN, until the net rates red winning and the board holds at least a number of
+ * MIDDLING_BLUE_WIN, until the net rates red winning and the board holds at least a number of
  * moves drawn up to ten, so that positions vary. Ends with red to move.
  */
 export const playOpening = async (
@@ -100,37 +100,46 @@ export const playOpening = async (
             throw new Error('the opening ended the game');
         }
 
-        const net = await analyse(positionOf(board), 1);
-
         if (board.toMove === 0) {
+            const net = await analyse(positionOf(board), 1);
+
             if (board.moves.length >= OPENING_MAX_MOVES || (board.moves.length >= least && redWin(net) >= OPENING_RED_WIN)) {
                 return;
             }
 
             play(bestPriorMove(net.prior, isEmpty)!);
         } else {
-            // Failing one under the cap, the move tried that leaves blue the least.
-            const tried: { move: string, blueWin: number }[] = [];
-
-            for (let i = 0; i < OPENING_BLUE_TRIES; ++i) {
-                const move = pickMediocreMove(net.prior, m => isEmpty(m) && !tried.some(t => t.move === m), 0.05, 0.3, random);
-
-                if (move === null) {
-                    break;
-                }
-
-                const blueWin = 1 - redWin(await analyse({ red: board.stones(0), blue: [...board.stones(1), move], toMove: 0 }, 1));
-
-                tried.push({ move, blueWin });
-
-                if (blueWin <= OPENING_BLUE_WIN) {
-                    break;
-                }
-            }
-
-            play(tried.sort((a, b) => a.blueWin - b.blueWin)[0].move);
+            play(await middlingBlueMove(board, analyse, random));
         }
     }
+};
+
+/**
+ * Blue's middling move: the first of its middling moves, tried in random order, after which the
+ * net rates blue at most MIDDLING_BLUE_WIN, or failing that the move tried that leaves blue the
+ * least.
+ */
+export const middlingBlueMove = async (board: SurvivalBoard, analyse: Analyse, random: () => number = Math.random): Promise<string> => {
+    const net = await analyse(positionOf(board), 1);
+    const tried: { move: string, blueWin: number }[] = [];
+
+    for (let i = 0; i < MIDDLING_BLUE_TRIES; ++i) {
+        const move = pickMediocreMove(net.prior, m => board.isEmpty(m) && !tried.some(t => t.move === m), 0.05, 0.3, random);
+
+        if (move === null) {
+            break;
+        }
+
+        const blueWin = 1 - redWin(await analyse({ red: board.stones(0), blue: [...board.stones(1), move], toMove: 0 }, 1));
+
+        tried.push({ move, blueWin });
+
+        if (blueWin <= MIDDLING_BLUE_WIN) {
+            break;
+        }
+    }
+
+    return tried.sort((a, b) => a.blueWin - b.blueWin)[0].move;
 };
 
 /** A decoy loses if a search after it rates red under this. */

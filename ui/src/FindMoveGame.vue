@@ -17,6 +17,7 @@ import { PlayerSettingsFacade } from './client/services/board-view-facades/Playe
 import { bestPriorMove, SurvivalBoard } from './survival.js';
 import {
     findMoveKey,
+    middlingBlueMove,
     playOpening,
     positionOf,
     prepareQuestion,
@@ -191,10 +192,11 @@ const nextQuestion = async (gen: number): Promise<void> => {
             break;
         }
 
-        // Nothing natural loses here, so there is nothing to find: KataHex plays its move.
+        // Nothing natural loses here, so there is nothing to find: KataHex plays its move. If red
+        // is behind, which is why nothing loses by much more, blue answers with a middling move.
         play(question.kataHex.move);
 
-        if (await answer(gen)) {
+        if (await answer(gen, question.kataHex.redWin < 0.5)) {
             return;
         }
     }
@@ -205,8 +207,8 @@ const nextQuestion = async (gen: number): Promise<void> => {
     status.value = 'Which one is KataHex\'s move?';
 };
 
-/** Blue answers with the net's favourite move. True if the game is over. */
-const answer = async (gen: number): Promise<boolean> => {
+/** Blue answers with the net's favourite move, or a middling one. True if the game is over. */
+const answer = async (gen: number, middling = false): Promise<boolean> => {
     if (board.winner() === 0) {
         finish('You connected.');
         return true;
@@ -215,9 +217,9 @@ const answer = async (gen: number): Promise<boolean> => {
     phase.value = 'answering';
     status.value = 'KataHex answers…';
 
-    const net = await ask(gen)(positionOf(board), 1);
-
-    play(bestPriorMove(net.prior, move => board.isEmpty(move))!);
+    play(middling
+        ? await middlingBlueMove(board, ask(gen))
+        : bestPriorMove((await ask(gen)(positionOf(board), 1)).prior, move => board.isEmpty(move))!);
 
     if (board.winner() === 1) {
         finish('Blue connected.');
