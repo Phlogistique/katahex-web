@@ -178,6 +178,12 @@ const DECOY_WIN = 0.3;
 /** And at least this under KataHex's move, so that the two do not lose alike. */
 const DECOY_GAP = 0.3;
 
+/** Failing natural decoys, blunders are drawn from this many moves the net likes least... */
+const BLUNDERS = 12;
+
+/** ...and this many searched at most. */
+const BLUNDER_TRIES = 4;
+
 /** A candidate the net alone rates the player above this is taken to win, and not searched. */
 const SURELY_WINS = 0.8;
 
@@ -188,7 +194,7 @@ export type Question = {
     /** The move KataHex's search plays, and how it rates the player after it. */
     kataHex: Choice;
 
-    /** Up to two moves that lose. */
+    /** Up to two moves that lose: natural ones, or failing them, blunders. */
     decoys: Choice[];
 };
 
@@ -237,9 +243,9 @@ const ranked = (prior: number[][], isEmpty: (move: string) => boolean): { move: 
  * The decoys are drawn from moves a human might play: the net's other favourites, the cells
  * around KataHex's move, where the opponent would like to play, the player's favourite as if
  * KataHex's move were already played, and for each stone, the move the net likes more for the
- * player once that stone is
- * taken away, as if it were not there. They are tried in order of how natural they look, and
- * the first two after which a search rates red losing are the decoys.
+ * player once that stone is taken away, as if it were not there. They are tried in order of how
+ * natural they look, and the first two after which a search rates the player losing are the
+ * decoys. Failing two, the rest are moves the net likes least that lose too.
  */
 export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, settings: FindMoveSettings): Promise<Question> => {
     const isEmpty = (move: string) => board.isEmpty(move);
@@ -288,24 +294,18 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
         }
     });
 
-    // Nearest the fight first, KataHex's move or the opponent's last, where a decoy has to be read out
-    // rather than dismissed at a glance; then those the net likes better.
     // After the swap, the last move is the swapped stone, blue's only one.
     const last = board.moves.at(-1) === SWAP ? board.stones(1)[0] : board.moves.at(-1);
+    // Nearest the fight first, KataHex's move or the opponent's last, where a decoy has to be read out
+    // rather than dismissed at a glance; then those the net likes better.
     const near = (move: string) => Math.min(distance(move, kataHex), last ? distance(move, last) : Infinity) <= 2;
     const ordered = [...candidates].sort((a, b) =>
         Number(near(b)) - Number(near(a)) || (prior.get(b) ?? 0) - (prior.get(a) ?? 0));
     const afterEach = ordered.map(move => withStone(here, you, move, other(you)));
     const netSays = await Promise.all(afterEach.map(after => analyse(after, 1)));
     const decoys: Choice[] = [];
-
-    for (let i = 0; i < ordered.length && decoys.length < 2; ++i) {
-        if (win(netSays[i], you) > SURELY_WINS) {
-            continue;
-        }
-
-        const move = ordered[i];
-        const checked = await analyse(afterEach[i], settings.checkVisits);
+    const tryDecoy = async (move: string): Promise<void> => {
+        const checked = await analyse(withStone(here, you, move, other(you)), settings.checkVisits);
         const free = (cell: string) => isEmpty(cell) && cell !== move;
 
         if (win(checked, you) < Math.min(DECOY_WIN, kataHexWin - DECOY_GAP)) {
@@ -315,6 +315,20 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
                 answer: bestChild(checked.children, free)?.move ?? bestPriorMove(checked.prior, free) ?? undefined,
             });
         }
+    };
+
+    for (let i = 0; i < ordered.length && decoys.length < 2; ++i) {
+        if (win(netSays[i], you) <= SURELY_WINS) {
+            await tryDecoy(ordered[i]);
+        }
+    }
+
+    // Too few natural moves lose: the rest of the decoys are moves the net likes least, plain
+    // blunders, so that there is still a question.
+    const worst = shuffled(ranked(root.prior, move => isEmpty(move) && move !== kataHex && !candidates.has(move)).slice(-BLUNDERS));
+
+    for (let i = 0; i < worst.length && i < BLUNDER_TRIES && decoys.length < 2; ++i) {
+        await tryDecoy(worst[i].move);
     }
 
     return {
