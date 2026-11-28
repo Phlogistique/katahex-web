@@ -290,7 +290,8 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
 
     // Nearest the fight first, KataHex's move or the opponent's last, where a decoy has to be read out
     // rather than dismissed at a glance; then those the net likes better.
-    const last = board.moves.at(-1);
+    // After the swap, the last move is the swapped stone, blue's only one.
+    const last = board.moves.at(-1) === SWAP ? board.stones(1)[0] : board.moves.at(-1);
     const near = (move: string) => Math.min(distance(move, kataHex), last ? distance(move, last) : Infinity) <= 2;
     const ordered = [...candidates].sort((a, b) =>
         Number(near(b)) - Number(near(a)) || (prior.get(b) ?? 0) - (prior.get(a) ?? 0));
