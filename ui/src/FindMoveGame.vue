@@ -249,10 +249,9 @@ const choose = async (move: string): Promise<void> => {
         }
 
         circle(question.kataHex.move);
-        finish(`That move loses: KataHex rates red ${percent(decoy.redWin)} after it. `
-            + (decoy.answer === question.kataHex.move
-                ? 'Blue answers on the circled cell, which was KataHex\'s move.'
-                : 'Blue answers as shown, and KataHex\'s move is circled.'));
+        finish(`That move loses: KataHex rates red ${percent(decoy.redWin)} after it, and `
+            + `${percent(question.kataHex.redWin)} after its own move, circled. `
+            + (decoy.answer === question.kataHex.move ? 'Blue answers on the circled cell.' : 'Blue answers as shown.'));
         return;
     }
 
@@ -298,6 +297,8 @@ const giveUp = (): void => {
 
     if (was === 'choosing' && question) {
         circle(question.kataHex.move);
+        finish(`You gave up. KataHex's move, circled, keeps red at ${percent(question.kataHex.redWin)}.`);
+        return;
     }
 
     finish('You gave up.');
