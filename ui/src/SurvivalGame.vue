@@ -35,6 +35,7 @@ import {
     type SurvivalSettings,
 } from './survival.js';
 import { pickFairFirstMove, shouldSwap } from './shared/swap-maps/swapDecision.js';
+import { IconChevronDown, IconChevronUp } from './client/vue/icons.js';
 
 const emit = defineEmits<{
     close: [];
@@ -122,6 +123,10 @@ const clockMs = ref(0);
 /** Whether this game got as far as the player's turn. */
 const handedOver = ref(false);
 const endReason = ref('');
+
+/** Whether the player folded the result card away, to see the board under it. */
+const resultFolded = ref(false);
+
 const error = ref<string | null>(null);
 const status = ref('');
 const bestBefore = ref<number | null>(null);
@@ -597,6 +602,7 @@ const finish = (reason: string): void => {
 
     phase.value = 'over';
     endReason.value = reason;
+    resultFolded.value = false;
     status.value = '';
     syncTakeBack();
 
@@ -763,32 +769,42 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
             </div>
 
             <div v-else-if="phase === 'over'" class="panel panel-bottom">
-                <div class="card shadow result">
+                <div class="card shadow result" :class="{ folded: resultFolded }">
                     <div class="card-body">
-                        <h2 class="h5">You survived {{ survived }} move{{ survived === 1 ? '' : 's' }}</h2>
-                        <p class="mb-1">{{ endReason }}</p>
-                        <p v-if="error" class="text-danger small mb-1">{{ error }}</p>
-                        <p v-if="bestBefore !== null && survived > bestBefore" class="small text-success mb-1">New best, up from {{ bestBefore }}.</p>
-                        <p v-else-if="bestBefore === null && survived > 0" class="small text-body-secondary mb-1">Your first score with these settings.</p>
-                        <p v-else-if="bestBefore !== null" class="small text-body-secondary mb-1">Best with these settings: {{ bestBefore }}.</p>
-                        <div class="d-flex flex-wrap gap-2 mt-2">
+                        <div class="d-flex align-items-start gap-2">
+                            <h2 class="h5 me-auto" :class="{ 'mb-0': resultFolded }">You survived {{ survived }} move{{ survived === 1 ? '' : 's' }}</h2>
                             <button
-                                v-if="canTakeBack"
                                 type="button"
-                                class="btn btn-success take-back-btn"
-                                title="Your last move and KataHex's answer, and play on; the clock gives no time back"
-                                @click="takeBack()"
-                            >Take back</button>
-                            <button
-                                v-if="lastHandover"
-                                type="button"
-                                class="btn btn-success again-btn"
-                                title="From the same position, as the same side"
-                                @click="again()"
-                            >Again</button>
-                            <button type="button" class="btn btn-outline-success new-game-btn" @click="start()">New game</button>
-                            <button type="button" class="btn btn-outline-secondary" @click="backToSettings()">Settings</button>
-                            <button type="button" class="btn btn-outline-primary" @click="analyse()">Analyse this game</button>
+                                class="btn btn-sm btn-link text-body-secondary p-0"
+                                :title="resultFolded ? 'Show the result' : 'Hide the result'"
+                                @click="resultFolded = !resultFolded"
+                            ><IconChevronUp v-if="resultFolded" /><IconChevronDown v-else /></button>
+                        </div>
+                        <div v-show="!resultFolded">
+                            <p class="mb-1">{{ endReason }}</p>
+                            <p v-if="error" class="text-danger small mb-1">{{ error }}</p>
+                            <p v-if="bestBefore !== null && survived > bestBefore" class="small text-success mb-1">New best, up from {{ bestBefore }}.</p>
+                            <p v-else-if="bestBefore === null && survived > 0" class="small text-body-secondary mb-1">Your first score with these settings.</p>
+                            <p v-else-if="bestBefore !== null" class="small text-body-secondary mb-1">Best with these settings: {{ bestBefore }}.</p>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button
+                                    v-if="canTakeBack"
+                                    type="button"
+                                    class="btn btn-success take-back-btn"
+                                    title="Your last move and KataHex's answer, and play on; the clock gives no time back"
+                                    @click="takeBack()"
+                                >Take back</button>
+                                <button
+                                    v-if="lastHandover"
+                                    type="button"
+                                    class="btn btn-success again-btn"
+                                    title="From the same position, as the same side"
+                                    @click="again()"
+                                >Again</button>
+                                <button type="button" class="btn btn-outline-success new-game-btn" @click="start()">New game</button>
+                                <button type="button" class="btn btn-outline-secondary" @click="backToSettings()">Settings</button>
+                                <button type="button" class="btn btn-outline-primary" @click="analyse()">Analyse this game</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -928,6 +944,9 @@ const clockShown = computed(() => timed.value && (playing.value || (phase.value 
 
         .card
             pointer-events auto
+
+            &.folded
+                width auto
 
 .settings
     display flex

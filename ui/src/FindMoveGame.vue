@@ -16,6 +16,7 @@ import usePlayerLocalSettingsStore from './client/stores/playerLocalSettingsStor
 import { PlayerSettingsFacade } from './client/services/board-view-facades/PlayerSettingsFacade.js';
 import { bestPriorMove, SurvivalBoard, SWAP, type Stone } from './survival.js';
 import { shouldSwap } from './shared/swap-maps/swapDecision.js';
+import { IconChevronDown, IconChevronUp } from './client/vue/icons.js';
 import {
     findMoveKey,
     firstMoveQuestion,
@@ -55,6 +56,9 @@ const found = ref(0);
 const handover = ref(0);
 const status = ref('');
 const endReason = ref('');
+
+/** Whether the player folded the result card away, to see the board under it. */
+const resultFolded = ref(false);
 
 /** What the last answer was worth, when the game goes on and the board does not say. */
 const notice = ref('');
@@ -354,6 +358,7 @@ const decideSwap = async (swap: boolean): Promise<void> => {
 const finish = (reason: string): void => {
     phase.value = 'over';
     endReason.value = reason;
+    resultFolded.value = false;
     status.value = '';
 
     const key = findMoveKey(settings);
@@ -476,16 +481,26 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
             </div>
 
             <div v-else-if="phase === 'over'" class="panel panel-bottom">
-                <div class="card shadow result">
+                <div class="card shadow result" :class="{ folded: resultFolded }">
                     <div class="card-body">
-                        <h2 class="h5">You found {{ found }} move{{ found === 1 ? '' : 's' }}</h2>
-                        <p class="mb-1">{{ endReason }}</p>
-                        <p v-if="error" class="text-danger small mb-1">{{ error }}</p>
-                        <p v-if="bestBefore !== null && found > bestBefore" class="small text-success mb-1">New best, up from {{ bestBefore }}.</p>
-                        <div class="d-flex flex-wrap gap-2 mt-2">
-                            <button type="button" class="btn btn-success new-game-btn" @click="start()">New game</button>
-                            <button type="button" class="btn btn-outline-secondary" @click="backToSettings()">Settings</button>
-                            <button type="button" class="btn btn-outline-primary" @click="analyse()">Analyse this game</button>
+                        <div class="d-flex align-items-start gap-2">
+                            <h2 class="h5 me-auto" :class="{ 'mb-0': resultFolded }">You found {{ found }} move{{ found === 1 ? '' : 's' }}</h2>
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-link text-body-secondary p-0"
+                                :title="resultFolded ? 'Show the result' : 'Hide the result'"
+                                @click="resultFolded = !resultFolded"
+                            ><IconChevronUp v-if="resultFolded" /><IconChevronDown v-else /></button>
+                        </div>
+                        <div v-show="!resultFolded">
+                            <p class="mb-1">{{ endReason }}</p>
+                            <p v-if="error" class="text-danger small mb-1">{{ error }}</p>
+                            <p v-if="bestBefore !== null && found > bestBefore" class="small text-success mb-1">New best, up from {{ bestBefore }}.</p>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button type="button" class="btn btn-success new-game-btn" @click="start()">New game</button>
+                                <button type="button" class="btn btn-outline-secondary" @click="backToSettings()">Settings</button>
+                                <button type="button" class="btn btn-outline-primary" @click="analyse()">Analyse this game</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -590,6 +605,9 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
 
         .card
             pointer-events auto
+
+            &.folded
+                width auto
 
 .settings
     display flex
