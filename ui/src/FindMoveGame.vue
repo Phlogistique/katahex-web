@@ -281,8 +281,6 @@ const choose = async (move: string): Promise<void> => {
     play(move);
 
     if (decoy) {
-        yourWin.value = decoy.win;
-
         if (decoy.answer) {
             play(decoy.answer);
         }
@@ -290,11 +288,11 @@ const choose = async (move: string): Promise<void> => {
         circle(question.kataHex.move);
 
         if (first) {
-            finish(`That first move is not fair: PlayHex's swap maps rate you ${percent(decoy.win)} after it`
-                + `${decoy.answer === SWAP ? ', once blue swaps it' : ''}, and ${percent(question.kataHex.win)} after the fair one, circled.`);
+            finish(`That first move is too ${decoy.answer === SWAP ? 'strong: blue swaps it' : 'weak'}. The fair one is circled.`);
             return;
         }
 
+        yourWin.value = decoy.win;
         finish(`That move loses: KataHex rates you ${percent(decoy.win)} after it, and `
             + `${percent(question.kataHex.win)} after its own move, circled. `
             + (decoy.answer === question.kataHex.move ? 'It answers on the circled cell.' : 'It answers as shown.'));
@@ -322,18 +320,17 @@ const decideSwap = async (swap: boolean): Promise<void> => {
     }
 
     const gen = generation;
-    const { winRate, swap: right } = swapAsked;
+    const right = swapAsked.swap;
 
     swapAsked = null;
 
     if (right !== null && right !== swap) {
-        finish(`PlayHex's swap maps rate red ${percent(winRate)} after its first move: `
-            + (right ? 'you had to swap it.' : 'swapping it gives you that move.'));
+        finish(right ? 'Red\'s first move was too strong: you had to swap it.' : 'Red\'s first move was too weak: swapping it gives you that move.');
         return;
     }
 
     if (right === null) {
-        notice.value = `Either was fine: PlayHex's swap maps rate red's first move fair, at ${percent(winRate)} for red.`;
+        notice.value = 'Either was fine: red\'s first move was fair.';
     } else {
         found.value++;
     }
@@ -385,7 +382,7 @@ const giveUp = (): void => {
     if (was === 'choosing' && question) {
         circle(question.kataHex.move);
         finish(board.moves.length === 0
-            ? `You gave up. The fair first move is circled, at ${percent(question.kataHex.win)} for you.`
+            ? 'You gave up. The fair first move is circled.'
             : `You gave up. KataHex's move, circled, keeps you at ${percent(question.kataHex.win)}.`);
         return;
     }

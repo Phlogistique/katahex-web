@@ -362,19 +362,17 @@ export const firstMoveQuestion = (size: number, random: () => number = Math.rand
 };
 
 /**
- * Red's first move when the player is blue, fair or far from it as likely, its winrate for red by
- * the swap maps, and whether blue should swap it: null when it is fair, and either will do.
+ * Red's first move when the player is blue, fair or far from it as likely, and whether blue
+ * should swap it: null when it is fair, and either will do.
  */
-export const swapQuestion = (size: number, random: () => number = Math.random): { move: string, winRate: number, swap: boolean | null } => {
+export const swapQuestion = (size: number, random: () => number = Math.random): { move: string, swap: boolean | null } => {
     if (random() < 0.5) {
-        const move = pickFairFirstMove(size, random)!;
-
-        return { move, winRate: getFirstMoveWinRate(size, move)!, swap: null };
+        return { move: pickFairFirstMove(size, random)!, swap: null };
     }
 
     const swap = random() < 0.5;
 
-    return { ...drawn(unbalanced(size, swap), random), swap };
+    return { move: drawn(unbalanced(size, swap), random).move, swap };
 };
 
 /** The three choices in random order, or fewer when there were not two decoys. */
