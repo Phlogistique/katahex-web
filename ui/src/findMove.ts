@@ -376,7 +376,7 @@ export const swapQuestion = (size: number, random: () => number = Math.random): 
     return { move: drawn(unbalanced(size, swap), random).move, swap };
 };
 
-/** The three choices in random order, or fewer when there were not two decoys. */
+/** The choices in random order. */
 export const shuffled = <T>(items: T[], random: () => number = Math.random): T[] => {
     const out = [...items];
 

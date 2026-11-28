@@ -229,13 +229,14 @@ const nextQuestion = async (gen: number): Promise<void> => {
 
         yourWin.value = asked.kataHex.win;
 
-        if (asked.decoys.length > 0) {
+        if (asked.decoys.length === 2) {
             offer(asked, 'Which one is KataHex\'s move?');
             return;
         }
 
-        // Nothing natural loses here, so there is nothing to find: KataHex plays its move. If the
-        // player is behind, which is why nothing loses by much more, the answer is a middling move.
+        // Not two natural moves lose here, so there is no question to ask: KataHex plays its move.
+        // If the player is behind, which is why nothing loses by much more, the answer is a
+        // middling move.
         play(asked.kataHex.move);
 
         if (await answer(gen, asked.kataHex.win < 0.5)) {
