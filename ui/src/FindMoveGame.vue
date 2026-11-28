@@ -14,10 +14,11 @@ import { parseMove, type HexMove, type Move } from '@playhex/move-notation';
 import { engine, netBackend, SearchAborted, type EngineAnalysis } from './engine.js';
 import usePlayerLocalSettingsStore from './client/stores/playerLocalSettingsStore.js';
 import { PlayerSettingsFacade } from './client/services/board-view-facades/PlayerSettingsFacade.js';
-import { bestPriorMove, SurvivalBoard } from './survival.js';
+import { bestPriorMove, SurvivalBoard, type Stone } from './survival.js';
 import {
     findMoveKey,
-    middlingBlueMove,
+    middlingMove,
+    other,
     playOpening,
     positionOf,
     prepareQuestion,
@@ -31,7 +32,7 @@ import {
 
 const emit = defineEmits<{
     close: [];
-    analyse: [game: { size: number, moves: HexMove[], handover: number, you: 0 | 1 }];
+    analyse: [game: { size: number, moves: HexMove[], handover: number, you: Stone }];
 }>();
 
 const { localSettings } = storeToRefs(usePlayerLocalSettingsStore());
@@ -55,8 +56,12 @@ const error = ref<string | null>(null);
 const bestBefore = ref<number | null>(null);
 const best = computed(() => localSettings.value.findMoveBest?.[findMoveKey(sanitizeFindMoveSettings(form))] ?? null);
 
-/** Red's winrate after KataHex's move, by its search. */
-const redWin = ref<number | null>(null);
+/** The side the player plays: red is 0, blue 1. */
+const you = ref<Stone>(0);
+const colorName = (side: Stone): string => side === 0 ? 'red' : 'blue';
+
+/** The player's winrate after KataHex's move, by its search. */
+const yourWin = ref<number | null>(null);
 
 const percent = (p: number): string => `${(p * 100).toFixed(p > 0.99 || p < 0.01 ? 1 : 0)}%`;
 
@@ -162,7 +167,8 @@ const start = async (): Promise<void> => {
     const gen = ++generation;
 
     found.value = 0;
-    redWin.value = null;
+    yourWin.value = null;
+    you.value = settings.color === 'red' ? 0 : settings.color === 'blue' ? 1 : (Math.random() < 0.5 ? 0 : 1);
     endReason.value = '';
     error.value = null;
     choices.value = [];
@@ -172,7 +178,7 @@ const start = async (): Promise<void> => {
     try {
         phase.value = 'opening';
         status.value = 'KataHex plays itself an opening…';
-        await playOpening(board, ask(gen), play);
+        await playOpening(board, ask(gen), you.value, play);
         handover.value = board.moves.length;
         await nextQuestion(gen);
     } catch (e) {
@@ -180,23 +186,23 @@ const start = async (): Promise<void> => {
     }
 };
 
-/** Searches the position for KataHex's move and its decoys, and offers them; red is to move. */
+/** Searches the position for KataHex's move and its decoys, and offers them; the player is to move. */
 const nextQuestion = async (gen: number): Promise<void> => {
     for (;;) {
         phase.value = 'preparing';
         status.value = 'KataHex looks for its move, and for moves that lose…';
         question = await prepareQuestion(board, ask(gen), settings);
-        redWin.value = question.kataHex.redWin;
+        yourWin.value = question.kataHex.win;
 
         if (question.decoys.length > 0) {
             break;
         }
 
-        // Nothing natural loses here, so there is nothing to find: KataHex plays its move. If red
-        // is behind, which is why nothing loses by much more, blue answers with a middling move.
+        // Nothing natural loses here, so there is nothing to find: KataHex plays its move. If the
+        // player is behind, which is why nothing loses by much more, the answer is a middling move.
         play(question.kataHex.move);
 
-        if (await answer(gen, question.kataHex.redWin < 0.5)) {
+        if (await answer(gen, question.kataHex.win < 0.5)) {
             return;
         }
     }
@@ -207,9 +213,9 @@ const nextQuestion = async (gen: number): Promise<void> => {
     status.value = 'Which one is KataHex\'s move?';
 };
 
-/** Blue answers with the net's favourite move, or a middling one. True if the game is over. */
+/** KataHex answers with the net's favourite move, or a middling one. True if the game is over. */
 const answer = async (gen: number, middling = false): Promise<boolean> => {
-    if (board.winner() === 0) {
+    if (board.winner() === you.value) {
         finish('You connected.');
         return true;
     }
@@ -218,11 +224,11 @@ const answer = async (gen: number, middling = false): Promise<boolean> => {
     status.value = 'KataHex answers…';
 
     play(middling
-        ? await middlingBlueMove(board, ask(gen))
+        ? await middlingMove(board, ask(gen))
         : bestPriorMove((await ask(gen)(positionOf(board), 1)).prior, move => board.isEmpty(move))!);
 
-    if (board.winner() === 1) {
-        finish('Blue connected.');
+    if (board.winner() === other(you.value)) {
+        finish(you.value === 0 ? 'Blue connected.' : 'Red connected.');
         return true;
     }
 
@@ -242,16 +248,16 @@ const choose = async (move: string): Promise<void> => {
     play(move);
 
     if (decoy) {
-        redWin.value = decoy.redWin;
+        yourWin.value = decoy.win;
 
         if (decoy.answer) {
             play(decoy.answer);
         }
 
         circle(question.kataHex.move);
-        finish(`That move loses: KataHex rates red ${percent(decoy.redWin)} after it, and `
-            + `${percent(question.kataHex.redWin)} after its own move, circled. `
-            + (decoy.answer === question.kataHex.move ? 'Blue answers on the circled cell.' : 'Blue answers as shown.'));
+        finish(`That move loses: KataHex rates you ${percent(decoy.win)} after it, and `
+            + `${percent(question.kataHex.win)} after its own move, circled. `
+            + (decoy.answer === question.kataHex.move ? 'It answers on the circled cell.' : 'It answers as shown.'));
         return;
     }
 
@@ -297,7 +303,7 @@ const giveUp = (): void => {
 
     if (was === 'choosing' && question) {
         circle(question.kataHex.move);
-        finish(`You gave up. KataHex's move, circled, keeps red at ${percent(question.kataHex.redWin)}.`);
+        finish(`You gave up. KataHex's move, circled, keeps you at ${percent(question.kataHex.win)}.`);
         return;
     }
 
@@ -311,7 +317,7 @@ const backToSettings = (): void => {
 
 const analyse = (): void => {
     abandon();
-    emit('analyse', { size: board.size, moves: [...board.moves] as HexMove[], handover: handover.value, you: 0 });
+    emit('analyse', { size: board.size, moves: [...board.moves] as HexMove[], handover: handover.value, you: you.value });
 };
 
 const close = (): void => {
@@ -335,7 +341,7 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
             <strong class="title">Find KataHex's move</strong>
             <span class="info small text-body-secondary">
                 <template v-if="phase !== 'setup'">
-                    you play <strong class="text-danger">red</strong> ·
+                    you play <strong :class="you === 0 ? 'text-danger' : 'text-primary'">{{ colorName(you) }}</strong> ·
                     found <strong class="text-body found">{{ found }}</strong>
                     <template v-if="bestBefore !== null"> · best {{ bestBefore }}</template>
                 </template>
@@ -350,7 +356,7 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
                 <div class="card shadow">
                     <div class="card-body">
                         <p class="small">
-                            You play red against KataHex. Each turn, three moves are marked A, B and C:
+                            You play against KataHex. Each turn, three moves are marked A, B and C:
                             one is the move KataHex's search plays, the other two look natural but lose.
                             Find KataHex's move as many times in a row as you can.
                         </p>
@@ -366,6 +372,11 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
                         </div>
                         <form class="settings" @submit.prevent="start()">
                             <label>Board size <input v-model.number="form.boardSize" type="number" min="5" max="19" class="form-control form-control-sm"></label>
+                            <label>You play <select v-model="form.color" class="form-select form-select-sm">
+                                <option value="random">random</option>
+                                <option value="red">red</option>
+                                <option value="blue">blue</option>
+                            </select></label>
                             <label>KataHex's visits <input v-model.number="form.visits" type="number" min="1" class="form-control form-control-sm"></label>
                             <label>Visits to check a decoy loses <input v-model.number="form.checkVisits" type="number" min="1" class="form-control form-control-sm"></label>
                             <div class="d-flex gap-2 align-items-center mt-2">
@@ -399,7 +410,12 @@ const busy = computed(() => phase.value === 'opening' || phase.value === 'prepar
                 <span v-if="busy" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
                 {{ status }}
             </span>
-            <strong v-if="redWin !== null" class="small text-danger" title="Red's winrate, by KataHex">{{ percent(redWin) }}</strong>
+            <strong
+                v-if="yourWin !== null"
+                class="small"
+                :class="you === 0 ? 'text-danger' : 'text-primary'"
+                title="Your winrate, by KataHex"
+            >{{ percent(yourWin) }}</strong>
             <button
                 v-if="phase !== 'setup' && phase !== 'over'"
                 type="button"

@@ -1,12 +1,13 @@
 /*
- * Find KataHex's move: the player is red against KataHex, but each turn they pick one of three
- * moves, the one KataHex's search plays and two decoys that look natural and lose.
+ * Find KataHex's move: the player is red or blue against KataHex, but each turn they pick one of
+ * three moves, the one KataHex's search plays and two decoys that look natural and lose.
  *
  * Red without the swap is so far ahead on the empty board that every natural move wins, and
  * there would be nothing to find. So red opens on a fair first move from PlayHex's swap maps,
- * and the net plays itself from there, red its favourite move and blue a middling one that
- * leaves blue at most 65%, until the net rates red winning: a position where red is ahead but
- * mistakes cost. Were red far behind, its best move and a blunder would lose alike.
+ * and the net plays itself from there, the player's side its favourite move and the other a
+ * middling one that leaves it at most 65%, until the net rates the player winning: a position
+ * where they are ahead but mistakes cost. Were they far behind, their best move and a blunder
+ * would lose alike.
  *
  * This file is the rules and the decoys, with the engine passed in, and no ui.
  * FindMoveGame.vue plays the game with them.
@@ -15,11 +16,13 @@
  */
 import { coordsToMove, parseMove as parseCell, type Move } from '@playhex/move-notation';
 import type { EngineAnalysis } from './engine.js';
-import { bestChild, bestPriorMove, pickMediocreMove, SurvivalBoard, type Stone } from './survival.js';
+import { bestChild, bestPriorMove, pickMediocreMove, SurvivalBoard, type Stone, type SurvivalColor } from './survival.js';
 import { pickFairFirstMove } from './shared/swap-maps/swapDecision.js';
 
 export type FindMoveSettings = {
     boardSize: number;
+
+    color: SurvivalColor;
 
     /** Visits of the search that finds KataHex's move. */
     visits: number;
@@ -30,6 +33,7 @@ export type FindMoveSettings = {
 
 export const DEFAULT_FIND_MOVE_SETTINGS: FindMoveSettings = {
     boardSize: 11,
+    color: 'random',
     visits: 200,
     checkVisits: 50,
 };
@@ -45,13 +49,15 @@ export const sanitizeFindMoveSettings = (stored: Partial<FindMoveSettings> | und
 
     return {
         boardSize: integer(merged.boardSize, d.boardSize, 5, 19),
+        color: (['random', 'red', 'blue'] as const).find(color => color === merged.color) ?? d.color,
         visits: integer(merged.visits, d.visits, 1, 100000),
         checkVisits: integer(merged.checkVisits, d.checkVisits, 1, 100000),
     };
 };
 
-/** What a best score is filed under. */
-export const findMoveKey = (s: FindMoveSettings): string => [s.boardSize, s.visits, s.checkVisits].join('/');
+/** What a best score is filed under: red's as before there was a choice. */
+export const findMoveKey = (s: FindMoveSettings): string =>
+    [s.boardSize, s.visits, s.checkVisits, ...(s.color === 'red' ? [] : [s.color])].join('/');
 
 /** A position to search, which may be the board's with a stone added or taken away. */
 export type Position = { red: string[], blue: string[], toMove: Stone };
@@ -60,29 +66,42 @@ export type Analyse = (position: Position, visits: number) => Promise<EngineAnal
 
 export const positionOf = (board: SurvivalBoard): Position => ({ red: board.stones(0), blue: board.stones(1), toMove: board.toMove });
 
-const redWin = (analysis: EngineAnalysis): number => 1 - (analysis.whiteWin ?? 0.5);
+export const other = (side: Stone): Stone => side === 0 ? 1 : 0;
 
-/** The net rates red at least this when self-play hands the position over. */
-const OPENING_RED_WIN = 0.85;
+/** A side's winrate, from blue's. */
+const winFor = (side: Stone, whiteWin: number): number => side === 0 ? 1 - whiteWin : whiteWin;
 
-/** Self-play hands over after this many moves even if red is not there yet. */
+const win = (analysis: EngineAnalysis, side: Stone): number => winFor(side, analysis.whiteWin ?? 0.5);
+
+/** `position` with a stone of `side` added on `move`, and `toMove` to move. */
+const withStone = (position: Position, side: Stone, move: string, toMove: Stone): Position => ({
+    red: side === 0 ? [...position.red, move] : position.red,
+    blue: side === 1 ? [...position.blue, move] : position.blue,
+    toMove,
+});
+
+/** The net rates the player at least this when self-play hands the position over. */
+const OPENING_WIN = 0.85;
+
+/** Self-play hands over after this many moves even if the player is not there yet. */
 const OPENING_MAX_MOVES = 30;
 
-/** Blue's middling move leaves blue at most this, by the net... */
-const MIDDLING_BLUE_WIN = 0.65;
+/** A middling move leaves its side at most this, by the net... */
+const MIDDLING_WIN = 0.65;
 
 /** ...if one of this many tries does. */
-const MIDDLING_BLUE_TRIES = 10;
+const MIDDLING_TRIES = 10;
 
 /**
  * Plays the opening on `board` through `play`: red's fair first move, then the net against
- * itself, red its favourite move and blue a middling one that leaves blue at most
- * MIDDLING_BLUE_WIN, until the net rates red winning and the board holds at least a number of
- * moves drawn up to ten, so that positions vary. Ends with red to move.
+ * itself, `you` its favourite move and the other side a middling one, until the net rates `you`
+ * winning and the board holds at least a number of moves drawn up to ten, so that positions
+ * vary. Ends with `you` to move.
  */
 export const playOpening = async (
     board: SurvivalBoard,
     analyse: Analyse,
+    you: Stone,
     play: (move: string) => void,
     random: () => number = Math.random,
 ): Promise<void> => {
@@ -100,62 +119,63 @@ export const playOpening = async (
             throw new Error('the opening ended the game');
         }
 
-        if (board.toMove === 0) {
+        if (board.toMove === you) {
             const net = await analyse(positionOf(board), 1);
 
-            if (board.moves.length >= OPENING_MAX_MOVES || (board.moves.length >= least && redWin(net) >= OPENING_RED_WIN)) {
+            if (board.moves.length >= OPENING_MAX_MOVES || (board.moves.length >= least && win(net, you) >= OPENING_WIN)) {
                 return;
             }
 
             play(bestPriorMove(net.prior, isEmpty)!);
         } else {
-            play(await middlingBlueMove(board, analyse, random));
+            play(await middlingMove(board, analyse, random));
         }
     }
 };
 
 /**
- * Blue's middling move: the first of its middling moves, tried in random order, after which the
- * net rates blue at most MIDDLING_BLUE_WIN, or failing that the move tried that leaves blue the
- * least.
+ * A middling move for the side to move: the first of its middling moves, tried in random order,
+ * after which the net rates it at most MIDDLING_WIN, or failing that the move tried that leaves
+ * it the least.
  */
-export const middlingBlueMove = async (board: SurvivalBoard, analyse: Analyse, random: () => number = Math.random): Promise<string> => {
+export const middlingMove = async (board: SurvivalBoard, analyse: Analyse, random: () => number = Math.random): Promise<string> => {
+    const side = board.toMove;
     const net = await analyse(positionOf(board), 1);
-    const tried: { move: string, blueWin: number }[] = [];
+    const tried: { move: string, win: number }[] = [];
 
-    for (let i = 0; i < MIDDLING_BLUE_TRIES; ++i) {
+    for (let i = 0; i < MIDDLING_TRIES; ++i) {
         const move = pickMediocreMove(net.prior, m => board.isEmpty(m) && !tried.some(t => t.move === m), 0.05, 0.3, random);
 
         if (move === null) {
             break;
         }
 
-        const blueWin = 1 - redWin(await analyse({ red: board.stones(0), blue: [...board.stones(1), move], toMove: 0 }, 1));
+        const after = win(await analyse(withStone(positionOf(board), side, move, other(side)), 1), side);
 
-        tried.push({ move, blueWin });
+        tried.push({ move, win: after });
 
-        if (blueWin <= MIDDLING_BLUE_WIN) {
+        if (after <= MIDDLING_WIN) {
             break;
         }
     }
 
-    return tried.sort((a, b) => a.blueWin - b.blueWin)[0].move;
+    return tried.sort((a, b) => a.win - b.win)[0].move;
 };
 
-/** A decoy loses if a search after it rates red under this. */
-const DECOY_RED_WIN = 0.3;
+/** A decoy loses if a search after it rates the player under this. */
+const DECOY_WIN = 0.3;
 
 /** And at least this under KataHex's move, so that the two do not lose alike. */
 const DECOY_GAP = 0.3;
 
-/** A candidate the net alone rates red above this is taken to win, and not searched. */
+/** A candidate the net alone rates the player above this is taken to win, and not searched. */
 const SURELY_WINS = 0.8;
 
-/** A move to choose, how a search rates red after it and, for a decoy, blue's answer. */
-export type Choice = { move: string, redWin: number, answer?: string };
+/** A move to choose, how a search rates the player after it and, for a decoy, the answer. */
+export type Choice = { move: string, win: number, answer?: string };
 
 export type Question = {
-    /** The move KataHex's search plays, and how it rates red after it. */
+    /** The move KataHex's search plays, and how it rates the player after it. */
     kataHex: Choice;
 
     /** Up to two moves that lose. */
@@ -202,16 +222,18 @@ const ranked = (prior: number[][], isEmpty: (move: string) => boolean): { move: 
 };
 
 /**
- * KataHex's move in the position on the board, red to move, and two decoys.
+ * KataHex's move in the position on the board for the player, who is to move, and two decoys.
  *
  * The decoys are drawn from moves a human might play: the net's other favourites, the cells
- * around KataHex's move, where blue would like to play, red's favourite as if KataHex's move
- * were already played, and for each stone, the move the net likes more for red once that stone is
+ * around KataHex's move, where the opponent would like to play, the player's favourite as if
+ * KataHex's move were already played, and for each stone, the move the net likes more for the
+ * player once that stone is
  * taken away, as if it were not there. They are tried in order of how natural they look, and
  * the first two after which a search rates red losing are the decoys.
  */
 export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, settings: FindMoveSettings): Promise<Question> => {
     const isEmpty = (move: string) => board.isEmpty(move);
+    const you = board.toMove;
     const here = positionOf(board);
     const root = await analyse(here, settings.visits);
     const chosen = bestChild(root.children, isEmpty);
@@ -221,7 +243,7 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
         throw new Error('the engine has no move to suggest');
     }
 
-    const kataHexRedWin = chosen && chosen.visits > 0 ? 1 - chosen.whiteWin : redWin(root);
+    const kataHexWin = chosen && chosen.visits > 0 ? winFor(you, chosen.whiteWin) : win(root, you);
 
     const prior = new Map(ranked(root.prior, isEmpty).map(({ move, p }) => [move, p]));
     const candidates = new Set<string>();
@@ -234,11 +256,11 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
     ranked(root.prior, isEmpty).slice(0, 8).forEach(({ move }) => add(move));
     around(kataHex, board.size).forEach(add);
 
-    const blue = await analyse({ ...here, toMove: 1 }, 1);
+    const opponent = await analyse({ ...here, toMove: other(you) }, 1);
 
-    ranked(blue.prior, isEmpty).slice(0, 3).forEach(({ move }) => add(move));
+    ranked(opponent.prior, isEmpty).slice(0, 3).forEach(({ move }) => add(move));
 
-    const afterKataHex = await analyse({ ...here, red: [...here.red, kataHex] }, 1);
+    const afterKataHex = await analyse(withStone(here, you, kataHex, you), 1);
 
     add(ranked(afterKataHex.prior, move => isEmpty(move) && move !== kataHex)[0]?.move);
 
@@ -256,18 +278,18 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
         }
     });
 
-    // Nearest the fight first, KataHex's move or blue's last, where a decoy has to be read out
+    // Nearest the fight first, KataHex's move or the opponent's last, where a decoy has to be read out
     // rather than dismissed at a glance; then those the net likes better.
     const last = board.moves.at(-1);
     const near = (move: string) => Math.min(distance(move, kataHex), last ? distance(move, last) : Infinity) <= 2;
     const ordered = [...candidates].sort((a, b) =>
         Number(near(b)) - Number(near(a)) || (prior.get(b) ?? 0) - (prior.get(a) ?? 0));
-    const afterEach = ordered.map((move): Position => ({ red: [...here.red, move], blue: here.blue, toMove: 1 }));
+    const afterEach = ordered.map(move => withStone(here, you, move, other(you)));
     const netSays = await Promise.all(afterEach.map(after => analyse(after, 1)));
     const decoys: Choice[] = [];
 
     for (let i = 0; i < ordered.length && decoys.length < 2; ++i) {
-        if (redWin(netSays[i]) > SURELY_WINS) {
+        if (win(netSays[i], you) > SURELY_WINS) {
             continue;
         }
 
@@ -275,17 +297,17 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
         const checked = await analyse(afterEach[i], settings.checkVisits);
         const free = (cell: string) => isEmpty(cell) && cell !== move;
 
-        if (redWin(checked) < Math.min(DECOY_RED_WIN, kataHexRedWin - DECOY_GAP)) {
+        if (win(checked, you) < Math.min(DECOY_WIN, kataHexWin - DECOY_GAP)) {
             decoys.push({
                 move,
-                redWin: redWin(checked),
+                win: win(checked, you),
                 answer: bestChild(checked.children, free)?.move ?? bestPriorMove(checked.prior, free) ?? undefined,
             });
         }
     }
 
     return {
-        kataHex: { move: kataHex, redWin: kataHexRedWin },
+        kataHex: { move: kataHex, win: kataHexWin },
         decoys,
     };
 };
