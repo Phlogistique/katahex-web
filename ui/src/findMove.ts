@@ -4,8 +4,9 @@
  *
  * Red without the swap is so far ahead on the empty board that every natural move wins, and
  * there would be nothing to find. So red opens on a fair first move from PlayHex's swap maps,
- * and the net plays itself from there, red its favourite move and blue a middling one, until
- * the net rates red winning: a position where red is ahead but mistakes cost.
+ * and the net plays itself from there, red its favourite move and blue a middling one that
+ * leaves blue at most 65%, until the net rates red winning: a position where red is ahead but
+ * mistakes cost. Were red far behind, its best move and a blunder would lose alike.
  *
  * This file is the rules and the decoys, with the engine passed in, and no ui.
  * FindMoveGame.vue plays the game with them.
@@ -67,11 +68,17 @@ const OPENING_RED_WIN = 0.85;
 /** Self-play hands over after this many moves even if red is not there yet. */
 const OPENING_MAX_MOVES = 30;
 
+/** During the opening, blue plays a move after which the net rates blue at most this... */
+const OPENING_BLUE_WIN = 0.65;
+
+/** ...if it finds one among this many of its middling moves. */
+const OPENING_BLUE_TRIES = 10;
+
 /**
  * Plays the opening on `board` through `play`: red's fair first move, then the net against
- * itself, red its favourite move and blue a middling one, until the net rates red winning and
- * the board holds at least a number of moves drawn up to ten, so that positions vary. Ends with
- * red to move.
+ * itself, red its favourite move and blue a middling one that leaves blue at most
+ * OPENING_BLUE_WIN, until the net rates red winning and the board holds at least a number of
+ * moves drawn up to ten, so that positions vary. Ends with red to move.
  */
 export const playOpening = async (
     board: SurvivalBoard,
@@ -102,13 +109,35 @@ export const playOpening = async (
 
             play(bestPriorMove(net.prior, isEmpty)!);
         } else {
-            play(pickMediocreMove(net.prior, isEmpty, 0.05, 0.3, random)!);
+            // Failing one under the cap, the move tried that leaves blue the least.
+            const tried: { move: string, blueWin: number }[] = [];
+
+            for (let i = 0; i < OPENING_BLUE_TRIES; ++i) {
+                const move = pickMediocreMove(net.prior, m => isEmpty(m) && !tried.some(t => t.move === m), 0.05, 0.3, random);
+
+                if (move === null) {
+                    break;
+                }
+
+                const blueWin = 1 - redWin(await analyse({ red: board.stones(0), blue: [...board.stones(1), move], toMove: 0 }, 1));
+
+                tried.push({ move, blueWin });
+
+                if (blueWin <= OPENING_BLUE_WIN) {
+                    break;
+                }
+            }
+
+            play(tried.sort((a, b) => a.blueWin - b.blueWin)[0].move);
         }
     }
 };
 
 /** A decoy loses if a search after it rates red under this. */
 const DECOY_RED_WIN = 0.3;
+
+/** And at least this under KataHex's move, so that the two do not lose alike. */
+const DECOY_GAP = 0.3;
 
 /** A candidate the net alone rates red above this is taken to win, and not searched. */
 const SURELY_WINS = 0.8;
@@ -183,6 +212,8 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
         throw new Error('the engine has no move to suggest');
     }
 
+    const kataHexRedWin = chosen && chosen.visits > 0 ? 1 - chosen.whiteWin : redWin(root);
+
     const prior = new Map(ranked(root.prior, isEmpty).map(({ move, p }) => [move, p]));
     const candidates = new Set<string>();
     const add = (move: string | undefined | null) => {
@@ -235,7 +266,7 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
         const checked = await analyse(afterEach[i], settings.checkVisits);
         const free = (cell: string) => isEmpty(cell) && cell !== move;
 
-        if (redWin(checked) < DECOY_RED_WIN) {
+        if (redWin(checked) < Math.min(DECOY_RED_WIN, kataHexRedWin - DECOY_GAP)) {
             decoys.push({
                 move,
                 redWin: redWin(checked),
@@ -245,7 +276,7 @@ export const prepareQuestion = async (board: SurvivalBoard, analyse: Analyse, se
     }
 
     return {
-        kataHex: { move: kataHex, redWin: chosen && chosen.visits > 0 ? 1 - chosen.whiteWin : redWin(root) },
+        kataHex: { move: kataHex, redWin: kataHexRedWin },
         decoys,
     };
 };
